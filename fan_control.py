@@ -3,7 +3,7 @@ import base64, fcntl, hashlib, http.client, json, os, signal, sqlite3, ssl, stat
 from contextlib import contextmanager
 from pathlib import Path
 from ilo_chif import FanChannel
-from fan_curve import DEFAULT_CURVE, SETTINGS, validate_curve, cpu_temperatures, curve_output, next_target
+from fan_curve import DEFAULT_CURVE, SETTINGS, validate_curve, cpu_temperatures, curve_output, next_target, cooling_protection
 ROOT=Path('/DATA/.taelo/zimaos-dashboard')
 RUN=Path('/run/taelo-fan-control')
 USERS=Path('/var/lib/casaos')
@@ -100,7 +100,7 @@ def restore(current,reason=''):
     if chif_present() or current.get('boostActive'):
         try:
             with FanChannel() as channel:channel.default()
-            current.update(boostActive=False,boostAvailable=True,boostRemaining=0,targetPercent=None)
+            current.update(boostActive=False,boostAvailable=True,boostRemaining=0,targetPercent=None,requestedPercent=None,thermalProtection=False)
         except Exception:
             failures.append('Fan override restoration pending')
             current['boostAvailable']=False
@@ -118,7 +118,7 @@ def restore(current,reason=''):
     return current
 
 def publish(current):
-    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable','targetPercent','curveActive','curve','cpuTemperatures','curveTemperature']}
+    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable','targetPercent','curveActive','curve','cpuTemperatures','curveTemperature','requestedPercent','thermalProtection']}
     public.update(version=3,updatedAt=time.time(),minimumOutput=1,maximumOutput=100,mode='curve' if current.get('curveActive') else 'percentage' if current.get('boostActive') else 'automatic')
     atomic(STATUS,public,0o644)
 
@@ -162,7 +162,10 @@ def process(current,uid,command,ids,now):
                 current['boostActive']=True
                 current['curveActive']=mode=='curve'
                 if mode=='curve':current['curve']=adjustment
-                current['targetPercent']=curve_output(adjustment,current['curveTemperature']) if mode=='curve' else adjustment
+                current['requestedPercent']=None if mode=='curve' else adjustment
+                current['thermalProtection']=cooling_protection(cpus)
+                desired=curve_output(adjustment,current['curveTemperature']) if mode=='curve' else adjustment
+                current['targetPercent']=100 if current['thermalProtection'] else desired
                 current.pop('fallSince',None)
                 atomic(STATE,current)
                 start_boost(current)
@@ -209,9 +212,10 @@ def poll_boost(current):
 def poll_curve(current):
     cpus=cpu_temperatures()
     current.update(cpuTemperatures=cpus,curveTemperature=max(x['maximum'] for x in cpus))
-    if not current.get('curveActive'):return current
-    desired=curve_output(current['curve'],current['curveTemperature'])
-    target=next_target(current,desired,time.monotonic())
+    if not current.get('boostActive'):return current
+    current['thermalProtection']=cooling_protection(cpus,current.get('thermalProtection',False))
+    desired=curve_output(current['curve'],current['curveTemperature']) if current.get('curveActive') else current.get('requestedPercent') or current['targetPercent']
+    target=100 if current['thermalProtection'] else next_target(current,desired,time.monotonic())
     if target!=current.get('targetPercent'):
         current.update(restoreNeeded=True,ready=False)
         atomic(STATE,current)
