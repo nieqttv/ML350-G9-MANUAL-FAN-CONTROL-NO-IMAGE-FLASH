@@ -247,6 +247,12 @@ CPU 1/2 locations use host package/core temperatures, with the iLO coordinates u
 - Dashboard fragments in `dashboard/` mirror their injected sections in the canonical server `stats-panel.js` and `stats-panel.css`. Source changes are staged, checked, backed up and rebuilt with `apply.py`; only Taelo's dashboard/fan/metrics services are restarted.
 - No host, iLO, Docker daemon or gateway restart was performed.
 
+### Completed live curve test
+
+The administrator-mailbox integration test held a custom curve for 84 seconds. The host CPU maximum fell from 76°C into the 48–62°C range while the selected output stepped from 90% through 85%, 80%, 75%, 70% and 65%. PWM readback matched each controller target. The firmware countdown renewed from 18 to 59 seconds while retaining the 80% target. Default then confirmed the override inactive; later telemetry returned to 21% on all three installed fans.
+
+Evidence: `curve-dashboard-integration.json` and the successful `taelo-curve-integration.service` journal. The test curve was removed and the prior saved/default curve restored. The later integer-rounding check reached exactly 75% on all three fans using raw PWM 192. No deliberate overtemperature or stalled-fan condition was induced; those fallback paths were tested with fixtures.
+
 ## Other options and their limits
 
 - **BIOS cooling profiles:** documented and require no downgrade, but are not live per-fan percentage controls and require reset to apply.
