@@ -12,7 +12,9 @@ This corrects the initial inference from the misleading `Allow: GET, HEAD` heade
 
 **Live fan-speed adjustment and restoration are now verified:** a temporary adjustment of 5 moved all three installed fans from 21% to 20%; restoring zero returned all three to 21%. The user confirmed fan 4 is not physically installed, explaining the reported 0% fault for this test. No host/iLO restart or flash was performed. A native fan slider and Default button are now deployed under Details → Hardware in the ZimaOS dashboard.
 
-This is a reduction relative to automatic cooling, not an absolute-speed setting. In particular, `FanPercentAdjust: 50` does not mean 50% fan speed and cannot be used to raise the current 21% output to 50%. Faster-than-normal or absolute-speed control remains unverified.
+**Actual 100% fan output is now verified and deployed through a separate local CHIF control.** All three installed fans went from 21% to 100%, then back to 21%; the user also confirmed the audible result. The dashboard now offers Full speed and Default alongside the existing reduction slider. No host/iLO restart or firmware change was performed.
+
+The reduction slider remains relative to automatic cooling. `FanPercentAdjust: 50` is not 50% actual speed. The user's latest request for arbitrary **1–100% actual speed is still unfinished**: the verified boost handler uses fixed full output, and no safe variable-speed setter has been established. The UI does not pretend that the reduction slider provides that capability.
 
 ## Requirements
 
