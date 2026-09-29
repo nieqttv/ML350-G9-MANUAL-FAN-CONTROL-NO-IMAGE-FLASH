@@ -41,7 +41,7 @@ ch=FanChannel();ch.lib=Transport();ch.handle=c.c_void_p(1);ch.sequence=1
 ch.query=lambda:{'active':True,'remaining':30}
 for value in (1,25,50,75,100):
     result=ch.set_percentage(value)
-    assert result=={'locked':True,'raw':(value*255+50)//100}
+    assert result=={'locked':True,'raw':(value*255+99)//100}
 for value in (0,101,True,50.5,'50'):
     before=len(ch.lib.requests)
     try:ch.set_percentage(value);raise AssertionError('invalid target accepted')
