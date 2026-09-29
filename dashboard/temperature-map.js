@@ -106,8 +106,11 @@
      h("rect",{x:27,y:27,width:906,height:546,rx:13,class:"ts-map-chassis"}),
      sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null,
      sheet?h("g",{class:"ts-map-outlines","aria-hidden":"true"},[
-      h("path",{d:"M55 215 H505 C540 215 550 240 580 240 H904"}),
-      h("path",{d:"M55 395 H505 C540 395 550 370 580 370 H904"}),
+      h("path",{d:"M55 65 H535 V535 H55"}),
+      h("path",{d:"M55 156 H292 L334 188 H535"}),
+      h("path",{d:"M55 247 H305 L337 279 H535"}),
+      h("path",{d:"M55 321 H305 L337 353 H535"}),
+      h("path",{d:"M55 438 H292 L334 470 H535"}),
       ...heatsinks
      ]):null
     ])
