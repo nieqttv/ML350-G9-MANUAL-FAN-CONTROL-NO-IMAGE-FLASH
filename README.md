@@ -166,9 +166,9 @@ Evidence: `live_adjustment_test.py`, `282-live-adjustment-test.json`, `282-live-
 
 ## Next research questions
 
-1. Establish whether fan 4 is installed, expected, and operating; resolve the reported critical condition before reducing cooling.
-2. Once cooling health is established, measure a small temporary nonzero adjustment with temperature monitoring and independently scheduled restoration to zero; verify actual fan behavior and restoration.
-3. Establish persistence and client-loss behavior before implementing dashboard controls. This setting is an adjustment to automatic output, not a verified absolute percentage or per-fan control.
+1. Live adjustment and zero restoration are demonstrated; before dashboard integration, define conservative bounds, monitoring, and an independent restore policy.
+2. Establish persistence and client-loss behavior without host or iLO resets; the independent timer protected this experiment but does not prove firmware auto-reversion on client loss.
+3. Treat the setting as an adjustment to automatic output, not an absolute percentage or per-fan control.
 4. Trace the CHIF temporary fan-increase path separately if faster-than-normal cooling is required; its request and limits remain unverified.
 5. Investigate why GET and the Allow header omit the accepted extension. Do not depend on them alone for capability detection.
 
