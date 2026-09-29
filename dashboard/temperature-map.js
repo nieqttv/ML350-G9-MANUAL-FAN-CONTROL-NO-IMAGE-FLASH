@@ -1,7 +1,7 @@
 
  let temperatureSheetCache={key:"",url:null};
- function temperatureSheet(sensors){
-  const live=sensors.filter(t=>Number.isFinite(t.celsius)),key=live.map(t=>[t.name,t.x,t.y,t.celsius].join(":")).join("|");
+ function temperatureSheet(sensors,lowerFanMissing){
+  const live=sensors.filter(t=>Number.isFinite(t.celsius)),key=Number(lowerFanMissing)+"|"+live.map(t=>[t.name,t.x,t.y,t.celsius].join(":")).join("|");
   if(temperatureSheetCache.key===key)return temperatureSheetCache.url;
   if(!live.length)return null;
   const size=16,field=new Float64Array(256),fixed=new Uint8Array(256);
@@ -15,22 +15,25 @@
    let delta=0;
    for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
     const i=gy*size+gx;if(fixed[i])continue;
-    let sum=0,count=0;
-    if(gx){sum+=field[i-1];count++;}if(gx<15){sum+=field[i+1];count++;}
-    if(gy){sum+=field[i-16];count++;}if(gy<15){sum+=field[i+16];count++;}
-    const next=sum/count;delta=Math.max(delta,Math.abs(next-field[i]));field[i]=next;
+    let sum=0,weight=0;
+    const along=lowerFanMissing&&gx<4?.85:1.65,cross=.7;
+    if(gx){sum+=field[i-1]*cross;weight+=cross;}if(gx<15){sum+=field[i+1]*cross;weight+=cross;}
+    if(gy){sum+=field[i-16]*along*1.25;weight+=along*1.25;}
+    if(gy<15){sum+=field[i+16]*along*.8;weight+=along*.8;}
+    const next=sum/weight;delta=Math.max(delta,Math.abs(next-field[i]));field[i]=next;
    }
    if(delta<.005)break;
   }
   const spread=new Float64Array(field.length);
   for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
    const i=gy*size+gx;let sum=0,weight=0;
-   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-    if(!dx&&!dy)continue;
-    const w=dx&&dy?.7:1,nx=Math.max(0,Math.min(15,gx+dx)),ny=Math.max(0,Math.min(15,gy+dy));
+   const lower=lowerFanMissing&&gx<4;
+   for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+    const w=Math.exp(-dx*dx/1.7-dy*dy/(lower?3.3:6))*(dy<0?(lower?1.1:1.4):1);
+    const nx=Math.max(0,Math.min(15,gx+dx)),ny=Math.max(0,Math.min(15,gy+dy));
     sum+=field[ny*size+nx]*w;weight+=w;
    }
-   spread[i]=field[i]*.55+sum/weight*.45;
+   spread[i]=fixed[i]?field[i]:field[i]*.5+sum/weight*.5;
   }
   const cubic=(a,b,c,d,t)=>b+.5*t*(c-a+t*(2*a-5*b+4*c-d+t*(3*(b-c)+d-a)));
   const get=(x,y)=>spread[Math.max(0,Math.min(15,y))*16+Math.max(0,Math.min(15,x))];
@@ -74,7 +77,16 @@
   const short=t=>t.name.replace(/^\d+-/,"");
 
 
-  const sheet=fresh?temperatureSheet(located):null;
+  const fanActive=n=>hw.fans?.some(f=>f.name==="Fan "+n&&Number(f.percent)>0);
+  const lowerFanMissing=[1,2,3].every(fanActive)&&hw.fans?.some(f=>f.name==="Fan 4"&&Number(f.percent)===0);
+  const sheet=fresh?temperatureSheet(located,lowerFanMissing):null;
+  const heatsinks=located.filter(t=>/^0[23]-CPU [12]$/.test(t.name)).map(t=>{
+   const x=28+(15.8-t.y)/16.6*904,y=28+(15.8-t.x)/16.6*544;
+   return h("g",{class:"ts-map-heatsink",transform:"translate("+x+" "+y+")"},[
+    h("rect",{x:-50,y:-37,width:100,height:74,rx:5}),
+    ...[-24,-16,-8,0,8,16,24].map(offset=>h("path",{d:"M-42 "+offset+" H42"}))
+   ]);
+  });
   const pick=e=>{
    const rect=e.currentTarget.getBoundingClientRect(),px=(e.clientX-rect.left)/rect.width*960,py=(e.clientY-rect.top)/rect.height*600;
    const gx=15.8-16.6*(py-28)/544,gy=15.8-16.6*(px-28)/904;
@@ -92,7 +104,12 @@
     }},[
      h("defs",null,[h("clipPath",{id:"ts-thermal-sheet-clip"},[h("rect",{x:28,y:28,width:904,height:544,rx:12})])]),
      h("rect",{x:27,y:27,width:906,height:546,rx:13,class:"ts-map-chassis"}),
-     sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null
+     sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null,
+     sheet?h("g",{class:"ts-map-outlines","aria-hidden":"true"},[
+      h("path",{d:"M55 215 H505 C540 215 550 240 580 240 H904"}),
+      h("path",{d:"M55 395 H505 C540 395 550 370 580 370 H904"}),
+      ...heatsinks
+     ]):null
     ])
    ]),
    h("div",{class:"ts-map-legend"},[h("span",null,"20°C"),h("span",{class:"ts-map-gradient"}),h("span",null,"90°C")]),
