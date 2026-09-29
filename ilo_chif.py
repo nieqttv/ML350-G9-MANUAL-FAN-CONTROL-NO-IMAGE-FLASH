@@ -96,7 +96,7 @@ class FanChannel:
         before = self.percentage()
         if not timed['active'] or timed['remaining'] <= 10 or not before['locked']:
             raise RuntimeError('Timed fan override unavailable')
-        raw = (percent*255+50)//100
+        raw = (percent*255+99)//100
         self._platform(raw)
         after = self.percentage()
         if not after['locked'] or after['raw'] != raw:
