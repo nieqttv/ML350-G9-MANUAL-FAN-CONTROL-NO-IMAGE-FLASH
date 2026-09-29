@@ -3,6 +3,7 @@ import base64, fcntl, hashlib, http.client, json, os, signal, sqlite3, ssl, stat
 from contextlib import contextmanager
 from pathlib import Path
 from ilo_chif import FanChannel
+from fan_curve import DEFAULT_CURVE, SETTINGS, validate_curve, cpu_temperatures, curve_output, next_target
 ROOT=Path('/DATA/.taelo/zimaos-dashboard')
 RUN=Path('/run/taelo-fan-control')
 USERS=Path('/var/lib/casaos')
@@ -69,6 +70,10 @@ def telemetry(data,baseline=None):
     return fans,{name:sensor['ReadingCelsius'] for name,sensor in temps.items()}
 
 def validate(command,now):
+    if isinstance(command,dict) and command.get('mode')=='curve':
+        if set(command)!={'id','createdAt','mode','curve'}:raise ValueError('Invalid curve request')
+        validate({'id':command['id'],'createdAt':command['createdAt'],'mode':'percentage','output':100},now)
+        return 'curve',validate_curve(command['curve'])
     if not isinstance(command,dict) or set(command) not in ({'id','createdAt','output'},{'id','createdAt','output','mode'}):raise ValueError('Invalid request')
     if not isinstance(command['id'],str) or not 8<=len(command['id'])<=80:raise ValueError('Invalid request ID')
     if type(command['createdAt']) not in (int,float) or not now-15<=command['createdAt']<=now+5:raise ValueError('Request expired')
@@ -108,13 +113,13 @@ def restore(current,reason=''):
     if failures:
         current.update(error='; '.join(failures),ready=False,expiresAt=0)
     else:
-        current.update(restoreNeeded=False,expiresAt=0,activatedAt=0,owner=None,baseline={},ready=True,error=reason)
+        current.update(restoreNeeded=False,expiresAt=0,activatedAt=0,owner=None,baseline={},curveActive=False,ready=True,error=reason)
     atomic(STATE,current)
     return current
 
 def publish(current):
-    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable','targetPercent']}
-    public.update(version=2,updatedAt=time.time(),minimumOutput=1,maximumOutput=100,mode='percentage' if current.get('boostActive') else 'automatic')
+    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable','targetPercent','curveActive','curve','cpuTemperatures','curveTemperature']}
+    public.update(version=3,updatedAt=time.time(),minimumOutput=1,maximumOutput=100,mode='curve' if current.get('curveActive') else 'percentage' if current.get('boostActive') else 'automatic')
     atomic(STATUS,public,0o644)
 
 def read_command(path):
@@ -140,23 +145,32 @@ def process(current,uid,command,ids,now):
     try:
         if uid not in ids:raise ValueError('Administrator access required')
         mode,adjustment=validate(command,now)
-        if mode=='percentage' or adjustment:
+        if mode in ('percentage','curve') or adjustment:
             if not current.get('ready') or current.get('restoreNeeded'):raise ValueError('Fan control unavailable')
-            if mode=='percentage' and not current.get('boostAvailable'):raise ValueError('Fan speed control unavailable')
+            if mode in ('percentage','curve') and not current.get('boostAvailable'):raise ValueError('Fan speed control unavailable')
             if now-current.get('lastCommandAt',0)<2:raise ValueError('Please wait before changing again')
             fans,baseline=telemetry(request(),current.get('baseline'))
+            cpus=cpu_temperatures()
+            current.update(cpuTemperatures=cpus,curveTemperature=max(x['maximum'] for x in cpus))
             started=current.get('activatedAt') or now
             current.update(restoreNeeded=True,ready=False,expiresAt=0,heartbeat=now)
             atomic(STATE,current)
-            if mode=='percentage':
+            if mode in ('percentage','curve'):
                 request(0)
                 current['adjustment']=0
                 # Persist the possible override before issuing the command.
                 current['boostActive']=True
-                current['targetPercent']=adjustment
+                current['curveActive']=mode=='curve'
+                if mode=='curve':current['curve']=adjustment
+                current['targetPercent']=curve_output(adjustment,current['curveTemperature']) if mode=='curve' else adjustment
+                current.pop('fallSince',None)
                 atomic(STATE,current)
                 start_boost(current)
+                if mode=='curve':
+                    SETTINGS.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+                    atomic(SETTINGS,adjustment)
             else:
+                current['curveActive']=False
                 if current.get('boostActive'):
                     with FanChannel() as channel:channel.default()
                     current.update(boostActive=False,boostRemaining=0,targetPercent=None)
@@ -192,6 +206,23 @@ def poll_boost(current):
         current.update(restoreNeeded=False,ready=True)
     return current
 
+def poll_curve(current):
+    cpus=cpu_temperatures()
+    current.update(cpuTemperatures=cpus,curveTemperature=max(x['maximum'] for x in cpus))
+    if not current.get('curveActive'):return current
+    desired=curve_output(current['curve'],current['curveTemperature'])
+    target=next_target(current,desired,time.monotonic())
+    if target!=current.get('targetPercent'):
+        current.update(restoreNeeded=True,ready=False)
+        atomic(STATE,current)
+        with FanChannel() as channel:channel.set_percentage(target)
+        current.update(targetPercent=target,restoreNeeded=False,ready=True)
+    return current
+
+def saved_curve():
+    try:return validate_curve(json.loads(SETTINGS.read_text()))
+    except (OSError,ValueError):return [point[:] for point in DEFAULT_CURVE]
+
 def main(mode):
     global running
     signal.signal(signal.SIGTERM,lambda *args:stop())
@@ -202,7 +233,7 @@ def main(mode):
         return
     if mode=='controller':
         with locked():
-            current=restore(state());current['heartbeat']=time.time();atomic(STATE,current);publish(current)
+            current=restore(state());current['curve']=saved_curve();current['heartbeat']=time.time();atomic(STATE,current);publish(current)
             for directory in USERS.iterdir():
                 path=directory/'taelo_fan_request.json'
                 if directory.name.isdecimal() and path.exists():seen[str(path)]=path.stat().st_mtime_ns
@@ -223,6 +254,7 @@ def main(mode):
                                 fans,temps=telemetry(request(),current.get('baseline'))
                                 current.update(fans=fans,sampledAt=time.time())
                                 current=poll_boost(current)
+                                current=poll_curve(current)
                                 current['ready']=not current.get('restoreNeeded') and time.time()-current.get('guardHeartbeat',0)<12
                             except Exception as error:
                                 reason=str(error) if isinstance(error,RuntimeError) else 'Fan or temperature readings unavailable'
