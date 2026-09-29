@@ -46,6 +46,17 @@ with tempfile.TemporaryDirectory() as td:
  hardware['remaining']=15
  f.poll_boost(current)
  assert hardware['remaining']==60 and current['boostActive'] and not current['restoreNeeded']
+ for target in (1,50,75,100):
+  current['lastCommandAt']=0
+  current=f.process(current,'1',cmd('percentage',target),{'1'},time.time())
+  assert current['ack']['ok'] and current['targetPercent']==target
+  assert hardware['raw']==(target*255+50)//100
+  hardware['remaining']=15
+  f.poll_boost(current)
+  assert hardware['raw']==(target*255+50)//100 and hardware['remaining']==60
+ hardware['raw']=0
+ try:f.poll_boost(current);raise AssertionError('readback drift ignored')
+ except RuntimeError:pass
  hardware['failDefault']=True
  restored=f.restore(current)
  assert restored['restoreNeeded'] and not restored['ready'] and restored['boostActive']
