@@ -65,6 +65,17 @@ with tempfile.TemporaryDirectory() as td:
  assert current['targetPercent']==88
  hardware['remaining']=15;f.poll_boost(current)
  assert hardware['raw']==(88*255+99)//100
+ current['lastCommandAt']=0
+ quiet=[[40,10],[50,15],[60,20],[70,27],[85,40]]
+ f.cpu_temperatures=lambda:[{'id':0,'celsius':62,'maximum':62,'critical':93},{'id':1,'celsius':54,'maximum':54,'critical':93}]
+ current=f.process(current,'1',{'id':'quiet-curve-123','createdAt':time.time(),'mode':'curve','curve':quiet},{'1'},time.time())
+ assert current['ack']['ok'] and current['targetPercent']==22 and not current['thermalProtection']
+ f.cpu_temperatures=lambda:[{'id':0,'celsius':85,'maximum':85,'critical':93},{'id':1,'celsius':54,'maximum':54,'critical':93}]
+ f.poll_curve(current);assert current['targetPercent']==40 and not current['thermalProtection']
+ f.cpu_temperatures=lambda:[{'id':0,'celsius':90,'maximum':90,'critical':93},{'id':1,'celsius':54,'maximum':54,'critical':93}]
+ f.poll_curve(current);assert current['targetPercent']==100 and current['thermalProtection']
+ f.cpu_temperatures=lambda:[{'id':0,'celsius':84,'maximum':84,'critical':93},{'id':1,'celsius':54,'maximum':54,'critical':93}]
+ f.poll_curve(current);assert current['targetPercent']==40 and not current['thermalProtection']
  hardware['raw']=0
  try:f.poll_boost(current);raise AssertionError('readback drift ignored')
  except RuntimeError:pass
