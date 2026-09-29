@@ -23,6 +23,7 @@
 .taelo-system .ts-map-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .taelo-system .ts-map-heading>span{font-size:11px}
 .taelo-system .ts-map-scroll{max-width:100%;overflow:auto;margin-top:14px}
+.taelo-system .ts-map-ends{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 3% 8px;color:var(--taelo-text2);font-size:10px;letter-spacing:1.2px}
 .taelo-system .ts-map-svg{display:block;width:100%;min-width:0;height:auto;font-family:inherit}
 .taelo-system .ts-map-chassis{fill:var(--taelo-bg);stroke:var(--taelo-border);stroke-width:1.5}
 .taelo-system .ts-map-grid{stroke:var(--taelo-border);stroke-width:1;stroke-dasharray:2 6;opacity:.6}
