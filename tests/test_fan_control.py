@@ -25,8 +25,9 @@ def request(adjustment=None):
  return {'Fans':[{'FanName':'Fan '+str(i),'CurrentReading':21,'Status':{'Health':'OK'}} for i in (1,2,3)],
  'Temperatures':[{'Name':'CPU','ReadingCelsius':45,'UpperThresholdCritical':90,'Status':{'State':'Enabled','Health':'OK'}}]}
 f.FanChannel=Channel;f.request=request;f.chif_present=lambda:True
+f.cpu_temperatures=lambda:[{'id':0,'celsius':55,'maximum':55,'critical':100},{'id':1,'celsius':45,'maximum':45,'critical':100}]
 with tempfile.TemporaryDirectory() as td:
- f.STATE=Path(td)/'state.json';f.STATUS=Path(td)/'status.json'
+ f.STATE=Path(td)/'state.json';f.STATUS=Path(td)/'status.json';f.SETTINGS=Path(td)/'settings/curve.json'
  now=time.time()
  def cmd(mode='automatic',output=100):
   return {'id':'test-'+str(time.time_ns()),'createdAt':time.time(),'output':output,'mode':mode}
@@ -54,6 +55,16 @@ with tempfile.TemporaryDirectory() as td:
   hardware['remaining']=15
   f.poll_boost(current)
   assert hardware['raw']==(target*255+50)//100 and hardware['remaining']==60
+ current['lastCommandAt']=0
+ curve=[[40,20],[60,50],[80,100]]
+ current=f.process(current,'1',{'id':'curve-test-123','createdAt':time.time(),'mode':'curve','curve':curve},{'1'},time.time())
+ assert current['curveActive'] and current['targetPercent']==43 and current['ack']['ok']
+ assert f.saved_curve()==curve
+ f.cpu_temperatures=lambda:[{'id':0,'celsius':75,'maximum':75,'critical':100},{'id':1,'celsius':45,'maximum':45,'critical':100}]
+ f.poll_curve(current)
+ assert current['targetPercent']==88
+ hardware['remaining']=15;f.poll_boost(current)
+ assert hardware['raw']==(88*255+50)//100
  hardware['raw']=0
  try:f.poll_boost(current);raise AssertionError('readback drift ignored')
  except RuntimeError:pass
