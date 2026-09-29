@@ -16,6 +16,9 @@ class Channel:
   return self.query()
  def boost(self,seconds):
   events.append(('boost',seconds));hardware.update(active=True,remaining=seconds)
+ def set_percentage(self,percent):
+  events.append(('percentage',percent));hardware['raw']=(percent*255+50)//100
+ def percentage(self):return {'locked':hardware['active'],'raw':hardware.get('raw',255)}
  def query(self):return {key:hardware[key] for key in ('active','remaining')}
 def request(adjustment=None):
  if adjustment is not None:events.append(('adjust',adjustment));return {}
@@ -30,7 +33,7 @@ with tempfile.TemporaryDirectory() as td:
  current={'ready':True,'restoreNeeded':False,'boostAvailable':True,'heartbeat':now,'guardHeartbeat':now}
  current=f.process(current,'1',cmd('full'),{'1'},now)
  assert current['boostActive'] and current['ack']['ok'] and hardware['active']
- assert events.index(('adjust',0))<events.index(('boost',3600))
+ assert events.index(('adjust',0))<events.index(('boost',60))
  assert f.overdue(current,now+16)
  current['lastCommandAt']=0
  current=f.process(current,'1',cmd(output=80),{'1'},time.time())
@@ -40,9 +43,9 @@ with tempfile.TemporaryDirectory() as td:
  assert not f.manual(current) and current['ready'] and current['ack']['ok']
  current['lastCommandAt']=0
  current=f.process(current,'1',cmd('full'),{'1'},time.time())
- hardware['remaining']=90
+ hardware['remaining']=15
  f.poll_boost(current)
- assert hardware['remaining']==3600 and current['boostActive'] and not current['restoreNeeded']
+ assert hardware['remaining']==60 and current['boostActive'] and not current['restoreNeeded']
  hardware['failDefault']=True
  restored=f.restore(current)
  assert restored['restoreNeeded'] and not restored['ready'] and restored['boostActive']
@@ -50,7 +53,7 @@ with tempfile.TemporaryDirectory() as td:
  hardware['failDefault']=False
  restored=f.restore(restored)
  assert not restored['restoreNeeded'] and not restored['boostActive']
- for bad in [cmd('full',50),cmd('unsupported'),cmd(output=200),cmd(output=True)]:
+ for bad in [cmd('full',50),cmd('unsupported'),cmd(output=200),cmd(output=True),cmd('percentage',0),cmd('percentage',101),cmd('percentage',50.5)]:
   try:f.validate(bad,time.time());raise AssertionError('bad request accepted')
   except ValueError:pass
  restored=f.process(restored,'9',cmd('full'),{'1'},time.time())
@@ -58,4 +61,10 @@ with tempfile.TemporaryDirectory() as td:
  f.publish(restored)
  public=json.loads(f.STATUS.read_text())
  assert public['mode']=='automatic' and 'baseline' not in public and 'owner' not in public
-print('PASS full-speed transitions, renewal, independent restoration, partial failure, strict bounds and admin checks')
+ # Thermal safety and missing sensors must reject continued manual control.
+ hot=request();hot['Temperatures'][0]['ReadingCelsius']=86
+ for readings,baseline in [(hot,None),(request(),{'missing':20})]:
+  try:f.telemetry(readings,baseline);raise AssertionError('unsafe telemetry accepted')
+  except RuntimeError:pass
+print('PASS percentage targets, quantization, renewal, drift, restoration, faults, strict bounds and admin checks')
+
