@@ -14,7 +14,7 @@
   const missing=sensors.filter(t=>!located.includes(t));
   const selected=located.find(t=>t.name===selectedSensor.value)||located.reduce((a,b)=>!a||(b.celsius??-1)>(a.celsius??-1)?b:a,null);
   const x=t=>60+t.x*40,y=t=>660-t.y*40;
-  const color=t=>!Number.isFinite(t)?"var(--taelo-muted)":t<45?"#67a99e":t<65?"#b8ad78":t<80?"#ce975f":"#d8786d";
+  const color=t=>!Number.isFinite(t)?"var(--taelo-text2)":t<45?"#67a99e":t<65?"#b8ad78":t<80?"#ce975f":"#d8786d";
   const short=t=>t.name.replace(/^\d+-/,"");
   return h("section",{class:"ts-temperature-map","aria-label":"Server temperature map"},[
    h("div",{class:"ts-map-heading"},[h("div",{class:"ts-model"},"Temperature map"),h("span",{class:"ts-muted"},located.length+" sensors")]),
@@ -37,6 +37,7 @@
     h("div",null,[h("strong",null,short(selected)),h("span",{class:"ts-muted"},selected.host?"CPU package / cores":selected.location||"")]),
     h("strong",{style:{color:color(selected.celsius)}},temp(selected.celsius))
    ]):h("div",{class:"ts-muted"},"Sensor positions unavailable"),
+   h("select",{class:"ts-map-select","aria-label":"Temperature sensor",value:selected?.name,onChange:e=>selectedSensor.value=e.target.value},located.map(t=>h("option",{value:t.name},short(t)+" · "+temp(t.celsius)))),
    h("div",{class:"ts-map-legend"},[h("span",null,"20°C"),h("span",{class:"ts-map-gradient"}),h("span",null,"90°C")]),
    ...missing.map(t=>h("div",{class:"ts-sensor-row"},[h("span",null,short(t)),h("strong",null,temp(t.celsius))]))
   ]);
