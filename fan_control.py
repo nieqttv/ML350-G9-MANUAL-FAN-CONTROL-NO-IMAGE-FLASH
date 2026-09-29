@@ -196,7 +196,7 @@ def poll_boost(current):
         result=channel.query()
         value=channel.percentage()
     if not result['active'] or not value['locked']:raise RuntimeError('Fan override ended unexpectedly')
-    expected=((current.get('targetPercent') or 100)*255+50)//100
+    expected=((current.get('targetPercent') or 100)*255+99)//100
     if value['raw']!=expected:raise RuntimeError('Fan speed readback changed')
     current['boostRemaining']=result['remaining']
     if result['remaining']<20:
