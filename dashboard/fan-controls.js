@@ -12,7 +12,7 @@
    if(!fanHydrated){fanView.value=v.mode==="curve"?"curve":"manual";fanHydrated=true;}
    if(fanPending.value&&v.ack?.id===fanPending.value.id){fanError.value=v.ack.ok?"":v.ack.error||"Fan change failed";if(v.ack.ok&&fanPending.value.mode==="curve")curveDirty.value=false;fanPending.value=null;}
    if(fanPending.value&&Date.now()-fanPending.value.sentAt>18000){fanError.value="Change not confirmed";fanPending.value=null;}
-   if(!fanEditing&&!fanPending.value)fanDraft.value=v.targetPercent??Math.round(v.fans?.[0]?.percent||21);
+   if(!fanEditing&&!fanPending.value)fanDraft.value=v.requestedPercent??v.targetPercent??Math.round(v.fans?.[0]?.percent||21);
    if(!curveDirty.value&&!fanPending.value&&v.curve)curveDraft.value=v.curve.map(p=>[...p]);
   }catch{if(!disposed)fanError.value="Fan controls unavailable";}
   finally{fanReadBusy=false;}
@@ -28,7 +28,7 @@
  function curveProblem(){
   const p=curveDraft.value;
   if(p.some((v,i)=>v.some(x=>!Number.isInteger(x))||v[0]<20||v[0]>85||v[1]<1||v[1]>100||(i&&(v[0]<=p[i-1][0]||v[1]<p[i-1][1]))))return "Use rising temperatures (20–85°C) and nondecreasing fan speeds (1–100%).";
-  return p.at(-1)[1]!==100?"The final point must reach 100%.":"";
+  return "";
  }
  function curveChart(){
   const p=curveDraft.value,fx=t=>38+(t-20)/65*444,fy=v=>166-v*1.36;
@@ -72,7 +72,7 @@
     h("div",{class:"ts-curve-source"},[h("span",{class:"ts-muted"},"Hottest CPU · "+(Number.isFinite(f?.curveTemperature)?f.curveTemperature.toFixed(0)+"°C":"—")),h("button",{type:"button",class:"ts-fan-default",disabled:disabled||!!problem,onClick:()=>sendFan({mode:"curve",curve:curveDraft.value.map(p=>[...p])})},f?.curveActive?"Save curve":"Apply curve")])
    ]),
    h("div",{class:"ts-fan-actions"},[
-    h("span",{class:"ts-muted",role:"status"},fanPending.value?"Applying…":f?.restoreNeeded?"Restoring default…":f?.curveActive?"Curve · "+f.targetPercent+"%":f?.boostActive?"Manual · "+f.targetPercent+"%":"Automatic"),
+    h("span",{class:"ts-muted",role:"status"},fanPending.value?"Applying…":f?.restoreNeeded?"Restoring default…":f?.thermalProtection?"Cooling protection · 100%":f?.curveActive?"Curve · "+f.targetPercent+"%":f?.boostActive?"Manual · "+f.targetPercent+"%":"Automatic"),
     h("button",{type:"button",class:"ts-fan-default",disabled:!!fanPending.value,onClick:()=>setFan(100,"automatic")},"Default")
    ]),
    fanError.value||f?.error?h("div",{class:"ts-warning",role:"alert"},fanError.value||f.error):null,
