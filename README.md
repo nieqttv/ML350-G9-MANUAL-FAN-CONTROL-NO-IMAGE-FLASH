@@ -164,13 +164,32 @@ The user's requested absolute 50% speed was not applied: the confirmed API only 
 
 Evidence: `live_adjustment_test.py`, `282-live-adjustment-test.json`, `282-live-adjustment-test.log`, and the successful `taelo-fan-test-restore-1790692752.service` journal. The system metrics service remained active. No persistent nonzero override was left behind.
 
-## Next research questions
+## Deployed dashboard controls
 
-1. Live adjustment and zero restoration are demonstrated; before dashboard integration, define conservative bounds, monitoring, and an independent restore policy.
-2. Establish persistence and client-loss behavior without host or iLO resets; the independent timer protected this experiment but does not prove firmware auto-reversion on client loss.
-3. Treat the setting as an adjustment to automatic output, not an absolute percentage or per-fan control.
-4. Trace the CHIF temporary fan-increase path separately if faster-than-normal cooling is required; its request and limits remain unverified.
-5. Investigate why GET and the Allow header omit the accepted extension. Do not depend on them alone for capability detection.
+The user confirmed that the dashboard slider produces an audible response, then requested a wider range and removal of routine timed restoration. The final deployed slider spans **50–100% of automatic output** and has a **Default** button. It maps output to `FanPercentAdjust = 100 - output`, using the statically verified 0–50 range. The former 60-second test timeout has been removed. Moving right increases output back toward automatic cooling; it cannot exceed automatic output.
+
+The current setting is held until another command or Default, subject to protection: installed-fan or temperature problems, loss of iLO readings, revoked administrator access, a missing guard, or controller failure trigger restoration to zero. Controller startup and shutdown also restore zero. A browser disconnect alone does not reset a healthy held setting. This is operational holding while the services run, not a promise to preserve overrides across a reboot.
+
+Implementation:
+
+- `stats-panel.js` and `stats-panel.css` render native controls and live installed-fan readings. Fan 4 is excluded based on the user's confirmation that it is absent.
+- Root-only `fan_control.py` consumes `taelo_fan_request.json` from each current administrator's existing ZimaOS custom storage, and publishes acknowledgements through `taelo_fan_control.json`.
+- Requests contain only ID, creation time and output. Server-side checks enforce administrator role, freshness, integer bounds, rate limits and safe telemetry. Symlink and oversized request files are rejected. Existing requests are ignored at service startup.
+- No new network listener is opened. The browser never receives iLO credentials. TLS pinning is checked before credentials are sent.
+- `taelo-fan-control.service` monitors hardware; independent `taelo-fan-guard.service` restores default on an unfinished update or a controller heartbeat older than 15 seconds. Both use a shared lock and root-only state to avoid conflicting writes. Failed restoration remains pending and is retried; an unreachable iLO cannot be claimed to have received a reset.
+- Services can connect only to iLO's address. No host, iLO, Docker or gateway restart was needed. Only the dashboard override and the newly introduced fan services were reloaded during deployment.
+
+Validation covers bounds, malformed/stale requests, administrator checks, request-file symlinks, missing fans, temperature margins, failed restoration, apply/default state, and stale-heartbeat behavior. The final persistent mode was checked to retain a healthy setting beyond the former timeout. Browser tests used the actual served component with mocked authentication and responses: slider payloads, acknowledgements, rejected changes, Default, dark/light themes, mobile layout, and unmounting passed; rendered screenshots were inspected. Live administrator requests were also observed reaching the controller and receiving successful acknowledgements. The user independently reported that the controls work.
+
+Persistent mode uses reported thermal warning/critical thresholds with a 5°C margin. The earlier short experiment's 5°C rise-from-baseline guard was removed for persistent use, because normal workload changes would otherwise reset the user's setting. Missing sensors and unhealthy installed fans still trigger restoration.
+
+## Higher-speed investigation and remaining work
+
+1. Faster-than-automatic and absolute-speed control are not implemented. The existing slider must not be presented as an absolute 0–100% fan-speed control.
+2. Further static inspection found a retained `fan global lock`/`unlock` routine around ELF-layout address `0x00e19684`, with a global PWM lock field and flag. Evidence is saved in `282-blowout-handler.txt`. This is a different mechanism from the verified REST adjustment and may override the automatic fan algorithm; its safety semantics and an authorized reachable interface are not established. No lock or hidden diagnostic command was sent.
+3. Trace the CHIF host-requested temporary increase and its limits; strings and internal handlers alone are not enough to expose a production control.
+4. Establish broader workload behavior for the adjustment range. The complete 0–50 input range is statically bounded, but the controlled hardware experiment used adjustment 5, not every possible value.
+5. Investigate why GET and the Allow header omit the accepted extension; do not depend on them alone for capability detection.
 
 ## Other options and their limits
 
