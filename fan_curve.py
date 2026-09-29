@@ -20,8 +20,6 @@ def validate_curve(points):
             raise ValueError('Temperatures must increase and fan speeds cannot decrease')
         previous=point
         result.append(point[:])
-    if result[-1][1]!=100:
-        raise ValueError('The final curve point must reach 100%')
     return result
 
 def cpu_temperatures(root=Path('/sys/class/hwmon')):
@@ -35,6 +33,7 @@ def cpu_temperatures(root=Path('/sys/class/hwmon')):
             raise RuntimeError('CPU package sensor missing')
         sid=int(labels[package].split()[-1])
         values={}
+        alarm_active=False
         for key,label in labels.items():
             if not (label.startswith('Package id ') or label.startswith('Core ')):continue
             value=int((hw/(key+'_input')).read_text())/1000
@@ -42,16 +41,16 @@ def cpu_temperatures(root=Path('/sys/class/hwmon')):
                 raise RuntimeError('CPU temperature reading invalid')
             alarm=hw/(key+'_crit_alarm')
             if alarm.exists() and int(alarm.read_text()):
-                raise RuntimeError('CPU temperature alarm')
+                alarm_active=True
             values[key]=value
         if len(values)!=17:
             raise RuntimeError('CPU core sensors missing')
         critical=int((hw/(package+'_crit')).read_text())/1000
         maximum=max(values.values())
-        if not 85<=critical<=125 or maximum>=critical-8:
-            raise RuntimeError('CPU temperature limit reached')
+        if not 85<=critical<=125:
+            raise RuntimeError('CPU critical threshold unavailable')
         if sid in sockets:raise RuntimeError('Duplicate CPU package')
-        sockets[sid]={'id':sid,'celsius':values[package],'maximum':maximum,'critical':critical}
+        sockets[sid]={'id':sid,'celsius':values[package],'maximum':maximum,'critical':critical,'alarm':alarm_active}
     if set(sockets)!={0,1}:
         raise RuntimeError('Both CPU temperature sensors are required')
     return [sockets[k] for k in sorted(sockets)]
@@ -62,17 +61,12 @@ def curve_output(points,temperature):
     if temperature<=points[0][0]:return points[0][1]
     for (a,low),(b,high) in zip(points,points[1:]):
         if temperature<=b:return math.ceil(low+(high-low)*(temperature-a)/(b-a))
-    return 100
+    return points[-1][1]
+
+def cooling_protection(cpus,was_active=False):
+    margin=8 if was_active else 3
+    return any(c.get('alarm') or c['maximum']>=c['critical']-margin for c in cpus)
 
 def next_target(current,desired,now):
-    previous=current.get('targetPercent') or desired
-    if desired>=previous:
-        current.pop('fallSince',None)
-        return desired if desired>=previous+2 or desired==100 else previous
-    if desired>previous-3:
-        current.pop('fallSince',None)
-        return previous
-    since=current.setdefault('fallSince',now)
-    if now-since<10:return previous
-    current['fallSince']=now
-    return max(desired,previous-5)
+    # The saved curve is authoritative; no hidden delay or downward rate limit.
+    return desired
