@@ -9,7 +9,7 @@ USERS=Path('/var/lib/casaos')
 STATE=RUN/'lease.json'
 STATUS=RUN/'status.json'
 MAX_ADJUSTMENT=50
-BOOST_SECONDS=3600
+BOOST_SECONDS=60
 running=True
 
 def atomic(path,value,mode=0o600):
@@ -73,10 +73,14 @@ def validate(command,now):
     if not isinstance(command['id'],str) or not 8<=len(command['id'])<=80:raise ValueError('Invalid request ID')
     if type(command['createdAt']) not in (int,float) or not now-15<=command['createdAt']<=now+5:raise ValueError('Request expired')
     mode=command.get('mode','automatic')
-    if not isinstance(mode,str) or mode not in ('automatic','full'):raise ValueError('Invalid fan mode')
-    if type(command['output']) is not int or not 100-MAX_ADJUSTMENT<=command['output']<=100:raise ValueError('Output must be 50–100% of automatic')
+    if not isinstance(mode,str) or mode not in ('automatic','full','percentage'):raise ValueError('Invalid fan mode')
+    if type(command['output']) is not int:raise ValueError('Fan speed must be an integer')
+    if mode=='percentage':
+        if not 1<=command['output']<=100:raise ValueError('Fan speed must be 1–100%')
+        return mode,command['output']
+    if not 100-MAX_ADJUSTMENT<=command['output']<=100:raise ValueError('Output must be 50–100% of automatic')
     if mode=='full' and command['output']!=100:raise ValueError('Full speed requires 100% output')
-    return mode,100-command['output']
+    return ('percentage',100) if mode=='full' else (mode,100-command['output'])
 
 def manual(current):
     return bool(current.get('adjustment') or current.get('boostActive'))
@@ -91,11 +95,11 @@ def restore(current,reason=''):
     if chif_present() or current.get('boostActive'):
         try:
             with FanChannel() as channel:channel.default()
-            current.update(boostActive=False,boostAvailable=True,boostRemaining=0)
+            current.update(boostActive=False,boostAvailable=True,boostRemaining=0,targetPercent=None)
         except Exception:
-            failures.append('Full-speed restoration pending')
+            failures.append('Fan override restoration pending')
             current['boostAvailable']=False
-    else:current.update(boostActive=False,boostAvailable=False,boostRemaining=0)
+    else:current.update(boostActive=False,boostAvailable=False,boostRemaining=0,targetPercent=None)
     # Always attempt both restoration paths, even when one is unavailable.
     try:
         request(0)
@@ -109,8 +113,8 @@ def restore(current,reason=''):
     return current
 
 def publish(current):
-    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable']}
-    public.update(version=1,updatedAt=time.time(),minimumOutput=50,maximumOutput=100,mode='full' if current.get('boostActive') else 'automatic')
+    public={key:current.get(key) for key in ['adjustment','expiresAt','ready','error','ack','fans','sampledAt','restoreNeeded','boostActive','boostAvailable','targetPercent']}
+    public.update(version=2,updatedAt=time.time(),minimumOutput=1,maximumOutput=100,mode='percentage' if current.get('boostActive') else 'automatic')
     atomic(STATUS,public,0o644)
 
 def read_command(path):
@@ -125,8 +129,9 @@ def start_boost(current):
     with FanChannel() as channel:
         channel.default()
         channel.boost(BOOST_SECONDS)
+        channel.set_percentage(current.get('targetPercent') or 100)
         result=channel.query()
-        if not result['active'] or result['remaining']<=0:raise RuntimeError('Full speed was not confirmed')
+        if not result['active'] or result['remaining']<=0:raise RuntimeError('Fan speed was not confirmed')
     current.update(boostActive=True,boostAvailable=True,boostRemaining=result['remaining'])
     return current
 
@@ -135,25 +140,26 @@ def process(current,uid,command,ids,now):
     try:
         if uid not in ids:raise ValueError('Administrator access required')
         mode,adjustment=validate(command,now)
-        if mode=='full' or adjustment:
+        if mode=='percentage' or adjustment:
             if not current.get('ready') or current.get('restoreNeeded'):raise ValueError('Fan control unavailable')
-            if mode=='full' and not current.get('boostAvailable'):raise ValueError('Full speed unavailable')
+            if mode=='percentage' and not current.get('boostAvailable'):raise ValueError('Fan speed control unavailable')
             if now-current.get('lastCommandAt',0)<2:raise ValueError('Please wait before changing again')
             fans,baseline=telemetry(request(),current.get('baseline'))
             started=current.get('activatedAt') or now
             current.update(restoreNeeded=True,ready=False,expiresAt=0,heartbeat=now)
             atomic(STATE,current)
-            if mode=='full':
+            if mode=='percentage':
                 request(0)
                 current['adjustment']=0
                 # Persist the possible override before issuing the command.
                 current['boostActive']=True
+                current['targetPercent']=adjustment
                 atomic(STATE,current)
                 start_boost(current)
             else:
                 if current.get('boostActive'):
                     with FanChannel() as channel:channel.default()
-                    current.update(boostActive=False,boostRemaining=0)
+                    current.update(boostActive=False,boostRemaining=0,targetPercent=None)
                 request(adjustment)
                 current['adjustment']=adjustment
             current.update(restoreNeeded=False,ready=True,owner=uid,baseline=current.get('baseline') or baseline,activatedAt=started,fans=fans,sampledAt=time.time(),error='')
@@ -172,10 +178,14 @@ def overdue(current,now):
 
 def poll_boost(current):
     if not current.get('boostActive'):return current
-    with FanChannel() as channel:result=channel.query()
-    if not result['active']:raise RuntimeError('Full speed ended unexpectedly')
+    with FanChannel() as channel:
+        result=channel.query()
+        value=channel.percentage()
+    if not result['active'] or not value['locked']:raise RuntimeError('Fan override ended unexpectedly')
+    expected=((current.get('targetPercent') or 100)*255+50)//100
+    if value['raw']!=expected:raise RuntimeError('Fan speed readback changed')
     current['boostRemaining']=result['remaining']
-    if result['remaining']<120:
+    if result['remaining']<20:
         current.update(restoreNeeded=True,ready=False)
         atomic(STATE,current)
         start_boost(current)
@@ -243,3 +253,4 @@ def stop():
 if __name__=='__main__':
     if len(sys.argv)!=2 or sys.argv[1] not in ('controller','guard','restore'):raise SystemExit('controller, guard or restore')
     main(sys.argv[1])
+
