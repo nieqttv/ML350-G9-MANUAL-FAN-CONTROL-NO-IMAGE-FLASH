@@ -38,7 +38,7 @@ The dashboard's layout, grouping, themes, telemetry and graph-tooltip work is al
 | hwmon | CPU, NVMe and network-device sensors; no exposed `fan*`/`pwm*` control |
 | Cooling telemetry | Fans 1–3 approximately 20%; fan 4 reports Enabled/Critical and 0%; fans 5–8 absent |
 
-Fan 4's status is a reported fault, not a confirmed physical diagnosis. iLO also reports a degraded embedded flash/SD write-verification self-test. Neither condition was altered during this research.
+The user confirmed fan 4 is not installed. Its iLO Enabled/Critical/0% report is retained as raw telemetry but was excluded from the installed-fan health check for the bounded test. Fans 1–3 were monitored individually. iLO also reports a degraded embedded flash/SD write-verification self-test; this research did not alter that condition.
 
 ## Evidence and interpretation
 
