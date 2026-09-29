@@ -140,7 +140,7 @@ The following requests targeted only the thermal endpoint. The HTTP response's l
 | `{"Oem":{"Hp":{"TaeloProbeOnly":0}}}` | 400 | `Base.0.10.PropertyUnknown` | Negative control confirms arbitrary OEM fields are not silently accepted |
 | `{"Oem":{"Hp":{"FanPercentAdjust":51}}}` | 400 | `iLO.0.10.PropertyValueBadParam` | Rejected boundary matches the statically identified writer's range |
 
-The value 51 was chosen only after inspecting the unsigned `< 51` check that precedes the field write. No accepted positive adjustment, negative value, raw hardware access, hidden shell command, sensor change, or reset was tested.
+The value 51 was chosen only after inspecting the unsigned `< 51` check that precedes the field write. This initial batch did not apply an accepted positive adjustment; the later bounded test is documented below. No negative value, raw hardware access, hidden shell command, sensor change, or reset was tested.
 
 Afterward, authenticated GET still worked, fans 1–3 remained at 21%, fan 4 retained its pre-existing critical 0% reading, and reported temperature health showed no faults. These observations establish request handling and unchanged observed fan readings, not successful physical speed modulation.
 
