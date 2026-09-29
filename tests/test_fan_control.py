@@ -17,7 +17,7 @@ class Channel:
  def boost(self,seconds):
   events.append(('boost',seconds));hardware.update(active=True,remaining=seconds)
  def set_percentage(self,percent):
-  events.append(('percentage',percent));hardware['raw']=(percent*255+50)//100
+  events.append(('percentage',percent));hardware['raw']=(percent*255+99)//100
  def percentage(self):return {'locked':hardware['active'],'raw':hardware.get('raw',255)}
  def query(self):return {key:hardware[key] for key in ('active','remaining')}
 def request(adjustment=None):
@@ -51,10 +51,10 @@ with tempfile.TemporaryDirectory() as td:
   current['lastCommandAt']=0
   current=f.process(current,'1',cmd('percentage',target),{'1'},time.time())
   assert current['ack']['ok'] and current['targetPercent']==target
-  assert hardware['raw']==(target*255+50)//100
+  assert hardware['raw']==(target*255+99)//100
   hardware['remaining']=15
   f.poll_boost(current)
-  assert hardware['raw']==(target*255+50)//100 and hardware['remaining']==60
+  assert hardware['raw']==(target*255+99)//100 and hardware['remaining']==60
  current['lastCommandAt']=0
  curve=[[40,20],[60,50],[80,100]]
  current=f.process(current,'1',{'id':'curve-test-123','createdAt':time.time(),'mode':'curve','curve':curve},{'1'},time.time())
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as td:
  f.poll_curve(current)
  assert current['targetPercent']==88
  hardware['remaining']=15;f.poll_boost(current)
- assert hardware['raw']==(88*255+50)//100
+ assert hardware['raw']==(88*255+99)//100
  hardware['raw']=0
  try:f.poll_boost(current);raise AssertionError('readback drift ignored')
  except RuntimeError:pass
