@@ -11,15 +11,41 @@
    field[gy*size+gx]=sum/weight;
   }
   for(const t of live){const i=t.y*size+t.x;field[i]=fixed[i]?Math.max(field[i],t.celsius):t.celsius;fixed[i]=1;}
+  const ductSections=[[156,188,292,334],[247,279,305,337],[321,353,305,337],[438,470,292,334]];
+  const inletEdges=[65,188,279,353,470,535];
+  const airflowAt=(across,along)=>{
+   const horizontal=28+(15.8-along)/16.6*904,vertical=28+(15.8-across)/16.6*544;
+   if(horizontal>535||vertical<65||vertical>535)return {duct:-1,transverse:across,confinement:0};
+   const edges=[65,...ductSections.map(([rear,front,bendRear,bendFront])=>{
+    const progress=Math.max(0,Math.min(1,(horizontal-bendRear)/(bendFront-bendRear)));
+    return rear+(front-rear)*progress;
+   }),535];
+   let duct=0;while(duct<edges.length-2&&vertical>edges[duct+1])duct++;
+   const fraction=(vertical-edges[duct])/(edges[duct+1]-edges[duct]);
+   const inletVertical=inletEdges[duct]+fraction*(inletEdges[duct+1]-inletEdges[duct]);
+   const confinement=Math.max(0,Math.min(1,(535-horizontal)/60,(horizontal-28)/60));
+   return {duct,transverse:15.8-(inletVertical-28)/544*16.6,confinement};
+  };
+  const airflow=Array.from({length:256},(_,index)=>airflowAt(index%16,Math.floor(index/16)));
+  const passageMix=(from,to)=>from.duct>=0&&to.duct>=0&&from.duct!==to.duct?1-.8*Math.min(from.confinement,to.confinement):1;
+  const neighbors=airflow.map((flow,index)=>{
+   const across=index%16,along=Math.floor(index/16),lower=lowerFanMissing&&across<4,list=[];
+   for(let axial=-1;axial<=1;axial++)for(let lateral=-1;lateral<=1;lateral++){
+    const column=across+lateral,row=along+axial;
+    if((!axial&&!lateral)||column<0||column>15||row<0||row>15)continue;
+    const neighbor=row*16+column,transverse=airflow[neighbor].transverse-flow.transverse;
+    const direction=axial<0?(lower?1.1:1.4):axial>0?(lower?.95:.8):1;
+    const weight=Math.exp(-transverse*transverse/1.7-axial*axial/6)*(axial?(lower?.9:1.65):.7)*direction*passageMix(flow,airflow[neighbor]);
+    list.push([neighbor,weight]);
+   }
+   return list;
+  });
   for(let iteration=0;iteration<240;iteration++){
    let delta=0;
    for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
     const i=gy*size+gx;if(fixed[i])continue;
     let sum=0,weight=0;
-    const along=lowerFanMissing&&gx<4?.85:1.65,cross=.7;
-    if(gx){sum+=field[i-1]*cross;weight+=cross;}if(gx<15){sum+=field[i+1]*cross;weight+=cross;}
-    if(gy){sum+=field[i-16]*along*1.25;weight+=along*1.25;}
-    if(gy<15){sum+=field[i+16]*along*.8;weight+=along*.8;}
+    for(const [neighbor,influence] of neighbors[i]){sum+=field[neighbor]*influence;weight+=influence;}
     const next=sum/weight;delta=Math.max(delta,Math.abs(next-field[i]));field[i]=next;
    }
    if(delta<.005)break;
@@ -29,9 +55,10 @@
    const i=gy*size+gx;let sum=0,weight=0;
    const lower=lowerFanMissing&&gx<4;
    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
-    const w=Math.exp(-dx*dx/1.7-dy*dy/(lower?3.3:6))*(dy<0?(lower?1.1:1.4):1);
-    const nx=Math.max(0,Math.min(15,gx+dx)),ny=Math.max(0,Math.min(15,gy+dy));
-    sum+=field[ny*size+nx]*w;weight+=w;
+    const nx=Math.max(0,Math.min(15,gx+dx)),ny=Math.max(0,Math.min(15,gy+dy)),neighbor=ny*size+nx;
+    const transverse=airflow[neighbor].transverse-airflow[i].transverse;
+    const influence=Math.exp(-transverse*transverse/1.7-dy*dy/(lower?3.3:6))*(dy<0?(lower?1.1:1.4):1)*passageMix(airflow[i],airflow[neighbor]);
+    sum+=field[neighbor]*influence;weight+=influence;
    }
    spread[i]=fixed[i]?field[i]:field[i]*.5+sum/weight*.5;
   }
@@ -80,13 +107,6 @@
   const fanActive=n=>hw.fans?.some(f=>f.name==="Fan "+n&&Number(f.percent)>0);
   const lowerFanMissing=[1,2,3].every(fanActive)&&hw.fans?.some(f=>f.name==="Fan 4"&&Number(f.percent)===0);
   const sheet=fresh?temperatureSheet(located,lowerFanMissing):null;
-  const heatsinks=located.filter(t=>/^0[23]-CPU [12]$/.test(t.name)).map(t=>{
-   const x=28+(15.8-t.y)/16.6*904,y=28+(15.8-t.x)/16.6*544;
-   return h("g",{class:"ts-map-heatsink",transform:"translate("+x+" "+y+")"},[
-    h("rect",{x:-50,y:-37,width:100,height:74,rx:5}),
-    ...[-24,-16,-8,0,8,16,24].map(offset=>h("path",{d:"M-42 "+offset+" H42"}))
-   ]);
-  });
   const pick=e=>{
    const rect=e.currentTarget.getBoundingClientRect(),px=(e.clientX-rect.left)/rect.width*960,py=(e.clientY-rect.top)/rect.height*600;
    const gx=15.8-16.6*(py-28)/544,gy=15.8-16.6*(px-28)/904;
@@ -104,15 +124,7 @@
     }},[
      h("defs",null,[h("clipPath",{id:"ts-thermal-sheet-clip"},[h("rect",{x:28,y:28,width:904,height:544,rx:12})])]),
      h("rect",{x:27,y:27,width:906,height:546,rx:13,class:"ts-map-chassis"}),
-     sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null,
-     sheet?h("g",{class:"ts-map-outlines","aria-hidden":"true"},[
-      h("path",{d:"M55 65 H535 V535 H55"}),
-      h("path",{d:"M55 156 H292 L334 188 H535"}),
-      h("path",{d:"M55 247 H305 L337 279 H535"}),
-      h("path",{d:"M55 321 H305 L337 353 H535"}),
-      h("path",{d:"M55 438 H292 L334 470 H535"}),
-      ...heatsinks
-     ]):null
+     sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null
     ])
    ]),
    h("div",{class:"ts-map-legend"},[h("span",null,"20°C"),h("span",{class:"ts-map-gradient"}),h("span",null,"90°C")]),
