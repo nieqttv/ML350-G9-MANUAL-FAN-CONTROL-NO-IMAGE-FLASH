@@ -58,5 +58,3 @@
 .taelo-system .ts-map-gradient{width:180px;background:linear-gradient(90deg,#2f4f6e 0%,#438f97 29%,#aec087 57%,#d9a162 79%,#c1574d 100%)}
 .taelo-system .ts-map-select{display:block}
 .taelo-system .ts-map-sheet image{image-rendering:auto}
-.taelo-system .ts-map-outlines{fill:none;stroke:#080b0d;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.72;pointer-events:none}
-.taelo-system .ts-map-outlines *{vector-effect:non-scaling-stroke}
