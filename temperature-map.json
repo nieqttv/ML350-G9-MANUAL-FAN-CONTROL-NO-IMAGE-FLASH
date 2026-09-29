@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "model": "HP ProLiant ML350 Gen9",
+  "grid": 16,
+  "sensors": {
+    "01-Inlet Ambient": {
+      "x": 10,
+      "y": 0,
+      "location": "Ambient"
+    },
+    "02-CPU 1": {
+      "x": 8,
+      "y": 12,
+      "location": "CPU"
+    },
+    "03-CPU 2": {
+      "x": 7,
+      "y": 9,
+      "location": "CPU"
+    },
+    "04-P1 DIMM 1-6": {
+      "x": 5,
+      "y": 12,
+      "location": "Memory"
+    },
+    "05-P1 DIMM 7-12": {
+      "x": 10,
+      "y": 12,
+      "location": "Memory"
+    },
+    "06-P2 DIMM 1-6": {
+      "x": 4,
+      "y": 9,
+      "location": "Memory"
+    },
+    "07-P2 DIMM 7-12": {
+      "x": 10,
+      "y": 9,
+      "location": "Memory"
+    },
+    "08-HD Max": {
+      "x": 13,
+      "y": 0,
+      "location": "System"
+    },
+    "09-Chipset": {
+      "x": 13,
+      "y": 10,
+      "location": "System"
+    },
+    "10-P/S 1": {
+      "x": 14,
+      "y": 12,
+      "location": "Power Supply"
+    },
+    "11-P/S 2": {
+      "x": 12,
+      "y": 12,
+      "location": "Power Supply"
+    },
+    "12-P/S 3": {
+      "x": 4,
+      "y": 12,
+      "location": "Power Supply"
+    },
+    "13-P/S 4": {
+      "x": 2,
+      "y": 12,
+      "location": "Power Supply"
+    },
+    "14-VR P1": {
+      "x": 8,
+      "y": 14,
+      "location": "System"
+    },
+    "15-VR P2": {
+      "x": 7,
+      "y": 7,
+      "location": "System"
+    },
+    "16-VR P1 Mem 1": {
+      "x": 3,
+      "y": 11,
+      "location": "System"
+    },
+    "17-VR P1 Mem 2": {
+      "x": 12,
+      "y": 11,
+      "location": "System"
+    },
+    "18-VR P2 Mem 1": {
+      "x": 3,
+      "y": 8,
+      "location": "System"
+    },
+    "19-VR P2 Mem 2": {
+      "x": 10,
+      "y": 7,
+      "location": "System"
+    },
+    "20-Exp Bay Drive": {
+      "x": 2,
+      "y": 0,
+      "location": "System"
+    },
+    "21-HD Cntlr Zone": {
+      "x": 13,
+      "y": 8,
+      "location": "System"
+    },
+    "22-Storage Batt": {
+      "x": 5,
+      "y": 5,
+      "location": "System"
+    },
+    "23-LOM": {
+      "x": 12,
+      "y": 14,
+      "location": "System"
+    },
+    "24-HD Controller": {
+      "x": 13,
+      "y": 7,
+      "location": "I/O Board"
+    },
+    "25-PCI 1": {
+      "x": 15,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "26-PCI 2": {
+      "x": 14,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "27-PCI 3": {
+      "x": 13,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "28-PCI 4": {
+      "x": 12,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "29-PCI 5": {
+      "x": 4,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "30-PCI 6": {
+      "x": 3,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "31-PCI 7": {
+      "x": 2,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "32-PCI 8": {
+      "x": 1,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "33-PCI 9": {
+      "x": 0,
+      "y": 13,
+      "location": "I/O Board"
+    },
+    "34-Chipset Zone": {
+      "x": 13,
+      "y": 11,
+      "location": "System"
+    },
+    "35-iLO Zone": {
+      "x": 1,
+      "y": 11,
+      "location": "System"
+    },
+    "36-Sys Exhaust": {
+      "x": 7,
+      "y": 15,
+      "location": "Chassis"
+    },
+    "37-VR P2 Zone": {
+      "x": 8,
+      "y": 8,
+      "location": "System"
+    },
+    "38-PCI 1 Zone": {
+      "x": 15,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "39-PCI 2 Zone": {
+      "x": 14,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "40-PCI 3 Zone": {
+      "x": 13,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "41-PCI 4 Zone": {
+      "x": 12,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "42-PCI 5 Zone": {
+      "x": 4,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "43-PCI 6 Zone": {
+      "x": 3,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "44-PCI 7 Zone": {
+      "x": 2,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "45-PCI 8 Zone": {
+      "x": 1,
+      "y": 14,
+      "location": "I/O Board"
+    },
+    "46-PCI 9 Zone": {
+      "x": 0,
+      "y": 14,
+      "location": "I/O Board"
+    }
+  }
+}
