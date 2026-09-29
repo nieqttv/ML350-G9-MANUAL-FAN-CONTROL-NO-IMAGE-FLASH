@@ -176,7 +176,7 @@ Implementation:
 
 - `stats-panel.js` and `stats-panel.css` render native controls and live installed-fan readings. Fan 4 is excluded based on the user's confirmation that it is absent.
 - Root-only `fan_control.py` consumes `taelo_fan_request.json` from each current administrator's existing ZimaOS custom storage, and publishes acknowledgements through `taelo_fan_control.json`.
-- Requests contain only ID, creation time and output. Server-side checks enforce administrator role, freshness, integer bounds, rate limits and safe telemetry. Symlink and oversized request files are rejected. Existing requests are ignored at service startup.
+- Requests contain ID, creation time, output, and an optional mode (`automatic` or `full`). Full mode requires output 100; other values are rejected. Server-side checks enforce administrator role, freshness, integer bounds, rate limits and safe telemetry. Symlink and oversized request files are rejected. Existing requests are ignored at service startup.
 - No new network listener is opened. The browser never receives iLO credentials. TLS pinning is checked before credentials are sent.
 - `taelo-fan-control.service` monitors hardware; independent `taelo-fan-guard.service` restores default on an unfinished update or a controller heartbeat older than 15 seconds. Both use a shared lock and root-only state to avoid conflicting writes. Failed restoration remains pending and is retried; an unreachable iLO cannot be claimed to have received a reset.
 - Services can connect only to iLO's address. No host, iLO, Docker or gateway restart was needed. Only the dashboard override and the newly introduced fan services were reloaded during deployment.
