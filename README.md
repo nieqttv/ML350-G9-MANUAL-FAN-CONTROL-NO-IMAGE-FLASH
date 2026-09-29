@@ -4,17 +4,11 @@ Investigation date: **29 September 2026**. Target: **HPE ProLiant ML350 Gen9, iL
 
 ## Current result
 
-**The network path to the internal adjustment setter has been identified and accepts a zero-adjustment request on stock iLO 4 2.82.** No firmware flash, host restart, or iLO restart was performed.
+**Actual 1–100% fan control is deployed on the ML350 Gen9 with stock iLO 4 2.82.** The existing ZimaOS dashboard now has a percentage slider, precise numeric entry, Default, an editable CPU fan curve and a temperature map. No host/iLO restart, firmware flash or downgrade was performed.
 
-The endpoint is `PATCH /redfish/v1/Chassis/1/Thermal/`, with the property `Oem.Hp.FanPercentAdjust`. It accepts zero with HTTP 200 and `Base.0.10.Success`, rejects an invented OEM property, and rejects 51 with `iLO.0.10.PropertyValueBadParam`. Static firmware tracing connects the thermal update handler to the bounded internal setter.
+The first percentage test moved all three installed fans from automatic 21% to actual 50%, then restored Default. It combined the verified timed CHIF override with a narrowly traced platform-record update. The original REST adjustment is only a relative reduction; it is no longer presented as actual speed.
 
-This corrects the initial inference from the misleading `Allow: GET, HEAD` header and missing property in GET responses: those observations did **not** mean the update path was unavailable.
-
-**Live fan-speed adjustment and restoration are now verified:** a temporary adjustment of 5 moved all three installed fans from 21% to 20%; restoring zero returned all three to 21%. The user confirmed fan 4 is not physically installed, explaining the reported 0% fault for this test. No host/iLO restart or flash was performed. A native fan slider and Default button are now deployed under Details → Hardware in the ZimaOS dashboard.
-
-**Actual 100% fan output is now verified and deployed through a separate local CHIF control.** All three installed fans went from 21% to 100%, then back to 21%; the user also confirmed the audible result. The dashboard now offers Full speed and Default alongside the existing reduction slider. No host/iLO restart or firmware change was performed.
-
-The reduction slider remains relative to automatic cooling. `FanPercentAdjust: 50` is not 50% actual speed. The user's latest request for arbitrary **1–100% actual speed is still unfinished**: the verified boost handler uses fixed full output, and no safe variable-speed setter has been established. The UI does not pretend that the reduction slider provides that capability.
+The custom curve uses Linux `coretemp` package/core readings from both processors, taking the hottest reading. The map uses sensor coordinates returned by this server's own iLO web endpoint; CPU readings are replaced with the faster host measurements. Credentials and firmware artifacts remain private.
 
 ## Requirements
 
@@ -25,7 +19,7 @@ The reduction slider remains relative to automatic cooling. `FanPercentAdjust: 5
 - Test only bounded requests supported by the firmware trace; do not use raw register writes, guessed internal messages, or reset commands.
 - Keep credentials, session tokens, private certificates, and authenticated configuration out of this repository.
 
-The dashboard's layout, grouping, themes, telemetry and graph-tooltip work is already deployed. This document concerns the unresolved fan-control work.
+The dashboard's layout, grouping, themes, telemetry and graph-tooltip work is already deployed. This document records the fan-control investigation and its deployed result.
 
 ## Tested platform
 
@@ -36,7 +30,7 @@ The dashboard's layout, grouping, themes, telemetry and graph-tooltip work is al
 | BIOS | P92, 2024-08-29, UEFI |
 | CPUs | Two Xeon E5-2697A v4; 32 physical cores, 64 threads |
 | Host | ZimaOS, Linux 6.12.25 |
-| Host interfaces | No loaded hpilo/IPMI module or corresponding device node |
+| Host interfaces | Verified upstream hpilo module loaded live; local CHIF device available; no IPMI module |
 | hwmon | CPU, NVMe and network-device sensors; no exposed `fan*`/`pwm*` control |
 | Cooling telemetry | Fans 1–3 approximately 20%; fan 4 reports Enabled/Critical and 0%; fans 5–8 absent |
 
@@ -166,9 +160,9 @@ The user's requested absolute 50% speed was not applied: the confirmed API only 
 
 Evidence: `live_adjustment_test.py`, `282-live-adjustment-test.json`, `282-live-adjustment-test.log`, and the successful `taelo-fan-test-restore-1790692752.service` journal. The system metrics service remained active. No persistent nonzero override was left behind.
 
-## Deployed dashboard controls
+## Earlier relative dashboard controls
 
-The user confirmed that the dashboard slider produces an audible response, then requested a wider range and removal of routine timed restoration. The final deployed slider spans **50–100% of automatic output** and has a **Default** button. It maps output to `FanPercentAdjust = 100 - output`, using the statically verified 0–50 range. The former 60-second test timeout has been removed. Moving right increases output back toward automatic cooling; it cannot exceed automatic output.
+The user confirmed that the dashboard slider produces an audible response, then requested a wider range and removal of routine timed restoration. The earlier deployed slider spanned **50–100% of automatic output** and has a **Default** button. It maps output to `FanPercentAdjust = 100 - output`, using the statically verified 0–50 range. The former 60-second test timeout has been removed. Moving right increases output back toward automatic cooling; it cannot exceed automatic output.
 
 The current setting is held until another command or Default, subject to protection: installed-fan or temperature problems, loss of iLO readings, revoked administrator access, a missing guard, or controller failure trigger restoration to zero. Controller startup and shutdown also restore zero. A browser disconnect alone does not reset a healthy held setting. This is operational holding while the services run, not a promise to preserve overrides across a reboot.
 
@@ -200,18 +194,58 @@ Firmware evidence:
 - The eight-second live test recorded **21% → 100% → 21% on all three fans**. Firmware expiry restored automatic control before the independent backup timer ran. The timer also completed successfully. Highest observed temperature was 73°C before the boost and 70–71°C during/after it.
 - A second test used the actual administrator mailbox and deployed controller. Full speed was acknowledged, all three fans remained at 100% after a 12-second hold, and Default was acknowledged. Subsequent live readings confirmed 21% on every installed fan. The user independently confirmed the physical full-speed response.
 
-The dashboard Full speed button holds this mode while healthy services run. The controller starts a one-hour firmware timer and renews it before expiry; renewal briefly releases and reapplies the override. A process/host failure cannot make this firmware timer indefinite. Default releases the CHIF override **and** clears the REST reduction, attempting both even if one fails. The independent guard also covers full-speed mode; failed restoration stays pending. Lowering the existing automatic-output slider first releases any full-speed override.
+The earlier Full speed implementation held this mode with a one-hour firmware timer. The current percentage implementation uses a 60-second timer and renews before 20 seconds remain; renewal briefly releases and reapplies the selected percentage. A process/host failure cannot make this firmware timer indefinite. Default releases the CHIF override **and** clears the REST reduction, attempting both even if one fails. The independent guard also covers full-speed mode; failed restoration stays pending. Lowering the existing automatic-output slider first releases any full-speed override.
 
 Mocked backend tests cover mode transitions, timer renewal, stale-heartbeat restoration eligibility, partial restoration failure, invalid values and administrator checks. Browser tests use the actual served component with mocked authentication/telemetry and cover Full speed, Default, disabled slider during boost, acknowledgements, rejection handling, themes and mobile layout. Live mailbox/hardware testing is separate evidence. These tests do not establish every workload or a live one-hour renewal cycle.
 
-## Actual percentage control still open
+## Verified actual percentage control
 
-The user now wants an actual 1–100% selector. **That is not implemented.** The known boost command hard-codes 255 internally; its remaining request parameter is not consumed as a speed. The reduction is applied earlier in the calculation, and the global lock replaces that result later, so combining those two mechanisms does not yield an arbitrary percentage.
+The original boost command hard-codes 255 internally. Its remaining argument is not a speed, and applying the REST reduction before the global override does not change the final PWM. The embedded-health FAN_SET route rebuilds an 8,000-byte cooling table; no table upload was attempted.
 
-Further tracing found the embedded-health interface and `EH_INTF_TYPE_FAN_SET`. Its handler at `0x00e11fb0` receives chunks of an 8,000-byte cooling configuration table and runs validation/activation, rather than accepting a simple speed. A nearby old command reports `defunct FAN SET command`. No cooling-table upload or guessed percentage packet was sent. An independently verified variable-speed interface and safe lower bounds remain prerequisites for exposing a percentage selector.
+Further offline tracing found a targeted platform-record update:
 
-Private evidence includes `chif-first-ping.json`, `chif-status-query.json`, `chif-fan-state-query.json`, `chif-idle-resume-test.json`, `chif-first-boost-test.json`, `chif-dashboard-integration-test.json`, `282-final-pwm-overrides.txt`, `282-chif-embedded-health-route.txt`, `282-eh-dispatch.txt` and `282-eh-fan-handler.txt`. The host boot ID remained unchanged, iLO stayed on 2.82, and final test state was Default.
+- CHIF SMIF command `0x0200`, service 0, uses a 4,024-byte payload. Its dispatch registration is at ELF file offset `0x511c58`; the handler is at ELF-layout address `0x01088034`.
+- External operation 7 enumerates record headers. Operation 6 reads one record. Operation 5 forwards a narrowly specified patch list to HEALTH's `platDefChifService`.
+- The internal selector-6 handler at `0x00e43dcc` calls `0x00e3fa4c`, which resolves a record ID and patches the supplied field. This generic firmware interface is broader than a fan API, so the implementation intentionally exposes only one fixed field.
+- This server's record 80 is type 3, 128 bytes long, named `Global PWM`. The lock bit is bit 0 of byte `0x59`; the PWM byte is `0x63`.
+- The timed override changed only byte 89 in the initial before/after record read. A one-byte patch to offset 99 with raw value 128 produced **50% on fans 1–3**. Default cleared the lock, and the independent restore timer also ran.
+- `ilo_chif.py` checks firmware, response framing, record length/type/ID/name, an active countdown with more than ten seconds left, and the lock before writing. It cannot select arbitrary record IDs or offsets. The target byte is read back afterward.
+- Integer percentages use `ceil(percent × 255 / 100)`, matching iLO's downward integer conversion. The physical control has 8-bit PWM resolution; low requests are not a guarantee that a fan can sustain that mechanical speed. Zero/unhealthy installed-fan readings trigger Default.
 
+The controller holds the selected target while healthy services run. A 60-second firmware timer bounds an abandoned override even if the host stops responding. The independent guard handles unfinished writes and missing heartbeats. Default releases the CHIF lock and clears REST reduction independently. No temperature sensor, thermal threshold, firmware image or persistent iLO configuration is modified.
+
+Private evidence: `282-platform-chif-route.txt`, `282-platform-chif-operations.txt`, `282-platform-record-update.txt`, `platform-read-record-zero.bin`, `platform-global-pwm-baseline.bin`, and `percentage-first-test.json`.
+
+An initial longer percentage test was interrupted by an administrator changing the slider. It is not counted as a completed renewal test. Subsequent tests detect a new administrator request and yield control without replacing it.
+
+## Custom CPU fan curves
+
+Details → Hardware → Cooling offers Manual and Curve editors. The curve has five editable temperature/speed points, a preview and an Apply/Save action. Default disables the override while retaining saved curve settings.
+
+- `fan_curve.py` reads both `coretemp` packages and their 32 core sensors directly. It does not use iLO's CPU temperatures as the control input.
+- The hottest package/core reading controls all installed fans. CPU readings update with the controller polling cycle, approximately every 3–5 seconds depending on iLO response time.
+- Validation allows 2–8 points at 20–85°C and 1–100%, with strictly increasing temperatures, nondecreasing outputs and a final 100% point. The current editor displays five points.
+- Linear interpolation determines the target. Increases of at least two percentage points, and any request for 100%, apply promptly. Decreases wait ten seconds and fall by at most five percentage points per step to avoid oscillation.
+- Both packages and all expected cores must remain readable. CPU critical alarms, temperatures within 8°C of the reported critical limit, missing sensors, unhealthy fans or iLO temperature faults restore Default.
+- Curve points persist in root-only `/var/lib/casaos/taelo-fan-settings/curve.json`. Controller startup restores automatic cooling; a saved curve is not automatically re-enabled after a reboot.
+- Administrator commands use the existing authenticated custom-file API. Curve requests contain `id`, `createdAt`, `mode: "curve"` and `curve`; manual requests use `mode: "percentage"` and `output`. Status version is 3.
+
+## Temperature map
+
+The authenticated, certificate-pinned `GET /json/health_temperature` response supplies `xposition` and `yposition` for all 46 potential sensor locations. The currently installed hardware exposes 27 readings. The iLO page itself indexes a 16×16 mesh using those coordinates.
+
+The native map preserves that grid and iLO's front-facing orientation: front at the bottom, rear at the top. It shows only present sensors, keeps a fallback row for any sensor without a position, and does not invent component locations. Colored halos indicate the readings around sensor points; they are not additional measured temperatures.
+
+CPU 1/2 locations use host package/core temperatures, with the iLO coordinates unchanged. Other readings retain their iLO source and freshness checks. Hover, focus, click or keyboard selection shows the sensor name and value. Mobile keeps the full map visible and provides a sensor selector. `temperature-map.json` contains only sanitized coordinates and labels.
+
+## Validation and deployment
+
+- Python checks: `python3 tests/test_fan_control.py`, `python3 tests/test_ilo_chif.py`, and `python3 tests/test_fan_curve.py`.
+- Tests cover exact packet layout, rejection of foreign records, range/type checks, timer requirements, target readback, restoration failures, curve interpolation/hysteresis, saved settings, hotter-CPU selection, missing sensors and critical temperatures.
+- Browser checks use the actual served Vue component with mocked authentication/telemetry. They cover 1–100% entry, acknowledgements, Default, curve editing/validation, mapped coordinates, host CPU replacement, 27 sensor points, keyboard selection, both themes, mobile sizing and clean unmount. Rendered screenshots were inspected.
+- These browser checks are separate from real administrator-mailbox/hardware tests. They do not establish every possible workload or the safe sustained minimum speed for each physical fan.
+- Dashboard fragments in `dashboard/` mirror their injected sections in the canonical server `stats-panel.js` and `stats-panel.css`. Source changes are staged, checked, backed up and rebuilt with `apply.py`; only Taelo's dashboard/fan/metrics services are restarted.
+- No host, iLO, Docker daemon or gateway restart was performed.
 
 ## Other options and their limits
 
@@ -249,3 +283,4 @@ Important local evidence files include:
 - 2026-09-29: recorded stock-interface and host-library investigation, unpacked official 2.82 firmware, identified external-adjustment and CHIF leads, and checked the generic schema against the running thermal resource.
 
 - 2026-09-29 follow-up: traced REST-to-health dispatch, tested zero and the rejection boundary without resets, corrected the earlier interface-support inference, and retained the fan-4 fault as the limit on cooling-reduction tests.
+
