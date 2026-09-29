@@ -22,8 +22,18 @@
    }
    if(delta<.005)break;
   }
+  const spread=new Float64Array(field.length);
+  for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
+   const i=gy*size+gx;let sum=0,weight=0;
+   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy)continue;
+    const w=dx&&dy?.7:1,nx=Math.max(0,Math.min(15,gx+dx)),ny=Math.max(0,Math.min(15,gy+dy));
+    sum+=field[ny*size+nx]*w;weight+=w;
+   }
+   spread[i]=field[i]*.55+sum/weight*.45;
+  }
   const cubic=(a,b,c,d,t)=>b+.5*t*(c-a+t*(2*a-5*b+4*c-d+t*(3*(b-c)+d-a)));
-  const get=(x,y)=>field[Math.max(0,Math.min(15,y))*16+Math.max(0,Math.min(15,x))];
+  const get=(x,y)=>spread[Math.max(0,Math.min(15,y))*16+Math.max(0,Math.min(15,x))];
   const sample=(x,y)=>{
    x=Math.max(0,Math.min(15,x));y=Math.max(0,Math.min(15,y));
    const ix=Math.floor(x),iy=Math.floor(y),dx=x-ix,dy=y-iy,rows=[];
@@ -35,12 +45,12 @@
    t=Math.max(20,Math.min(90,t));let i=1;while(i<stops.length-1&&t>stops[i][0])i++;
    const [a,ca]=stops[i-1],[b,cb]=stops[i],ratio=(t-a)/(b-a);return ca.map((v,k)=>Math.round(v+(cb[k]-v)*ratio));
   };
-  const canvas=document.createElement("canvas");canvas.width=canvas.height=256;
+  const width=384,height=232,canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;
   const context=canvas.getContext("2d");if(!context)return null;
-  const pixels=context.createImageData(256,256);
+  const pixels=context.createImageData(width,height);
   const minimum=Math.min(...live.map(t=>t.celsius)),maximum=Math.max(...live.map(t=>t.celsius));
-  for(let py=0;py<256;py++)for(let px=0;px<256;px++){
-   const value=Math.max(minimum,Math.min(maximum,sample(-.8+16.6*px/255,15.8-16.6*py/255))),rgb=color(value),offset=(py*256+px)*4;
+  for(let py=0;py<height;py++)for(let px=0;px<width;px++){
+   const value=Math.max(minimum,Math.min(maximum,sample(15.8-16.6*py/(height-1),15.8-16.6*px/(width-1)))),rgb=color(value),offset=(py*width+px)*4;
    pixels.data[offset]=rgb[0];pixels.data[offset+1]=rgb[1];pixels.data[offset+2]=rgb[2];pixels.data[offset+3]=255;
   }
   context.putImageData(pixels,0,0);
@@ -61,30 +71,28 @@
   const located=sensors.filter(t=>Number.isInteger(t.x)&&Number.isInteger(t.y)&&t.x>=0&&t.x<=15&&t.y>=0&&t.y<=15);
   const missing=sensors.filter(t=>!located.includes(t));
   const selected=located.find(t=>t.name===selectedSensor.value)||located.reduce((a,b)=>!a||(b.celsius??-1)>(a.celsius??-1)?b:a,null);
-  const x=t=>60+t.x*40,y=t=>660-t.y*40;
-  const color=t=>!Number.isFinite(t)?"var(--taelo-text2)":t<45?"#67a99e":t<65?"#b8ad78":t<80?"#ce975f":"#d8786d";
   const short=t=>t.name.replace(/^\d+-/,"");
 
 
   const sheet=fresh?temperatureSheet(located):null;
   const pick=e=>{
-   const rect=e.currentTarget.getBoundingClientRect(),gx=((e.clientX-rect.left)/rect.width*720-60)/40,gy=(660-(e.clientY-rect.top)/rect.height*720)/40;
+   const rect=e.currentTarget.getBoundingClientRect(),px=(e.clientX-rect.left)/rect.width*960,py=(e.clientY-rect.top)/rect.height*600;
+   const gx=15.8-16.6*(py-28)/544,gy=15.8-16.6*(px-28)/904;
    const nearest=located.reduce((a,b)=>!a||(b.x-gx)**2+(b.y-gy)**2<(a.x-gx)**2+(a.y-gy)**2?b:a,null);
    if(nearest)selectedSensor.value=nearest.name;
   };
   return h("section",{class:"ts-temperature-map","aria-label":"Server temperature map"},[
    h("div",{class:"ts-map-heading"},[h("div",{class:"ts-model"},"Temperature map"),h("span",{class:"ts-muted"},"ML350 Gen9")]),
    h("div",{class:"ts-map-scroll"},[
-    h("svg",{viewBox:"0 0 720 720",class:"ts-map-svg ts-map-sheet",role:"img",tabindex:0,"aria-label":"Continuous server temperature map, front at bottom and rear at top",onPointermove:pick,onPointerdown:pick,onKeydown:e=>{
+    h("div",{class:"ts-map-ends"},[h("span",null,"OUTLET / PCIe"),h("span",null,"FRONT / INLET")]),
+    h("svg",{viewBox:"0 0 960 600",class:"ts-map-svg ts-map-sheet",role:"img",tabindex:0,"aria-label":"Continuous server temperature map, outlet and PCIe at left, front inlet at right",onPointermove:pick,onPointerdown:pick,onKeydown:e=>{
      if(!["ArrowRight","ArrowLeft","ArrowUp","ArrowDown"].includes(e.key))return;e.preventDefault();
      const index=located.findIndex(t=>t.name===selected?.name),step=e.key==="ArrowRight"||e.key==="ArrowDown"?1:-1;
      selectedSensor.value=located[(index+step+located.length)%located.length]?.name;
     }},[
-     h("defs",null,[h("clipPath",{id:"ts-thermal-sheet-clip"},[h("rect",{x:28,y:28,width:664,height:664,rx:12})])]),
-     h("rect",{x:27,y:27,width:666,height:666,rx:13,class:"ts-map-chassis"}),
-     sheet?h("image",{href:sheet,x:28,y:28,width:664,height:664,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null,
-     h("text",{x:360,y:18,"text-anchor":"middle",class:"ts-map-edge"},"REAR"),
-     h("text",{x:360,y:716,"text-anchor":"middle",class:"ts-map-edge"},"FRONT")
+     h("defs",null,[h("clipPath",{id:"ts-thermal-sheet-clip"},[h("rect",{x:28,y:28,width:904,height:544,rx:12})])]),
+     h("rect",{x:27,y:27,width:906,height:546,rx:13,class:"ts-map-chassis"}),
+     sheet?h("image",{href:sheet,x:28,y:28,width:904,height:544,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null
     ])
    ]),
    h("div",{class:"ts-map-legend"},[h("span",null,"20°C"),h("span",{class:"ts-map-gradient"}),h("span",null,"90°C")]),
