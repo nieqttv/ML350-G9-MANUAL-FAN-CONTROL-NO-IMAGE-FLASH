@@ -10,7 +10,7 @@ The endpoint is `PATCH /redfish/v1/Chassis/1/Thermal/`, with the property `Oem.H
 
 This corrects the initial inference from the misleading `Allow: GET, HEAD` header and missing property in GET responses: those observations did **not** mean the update path was unavailable.
 
-**Live fan-speed adjustment and restoration are now verified:** a temporary adjustment of 5 moved all three installed fans from 21% to 20%; restoring zero returned all three to 21%. The user confirmed fan 4 is not physically installed, explaining the reported 0% fault for this test. No restart or flash was performed. The dashboard has not received a fan slider.
+**Live fan-speed adjustment and restoration are now verified:** a temporary adjustment of 5 moved all three installed fans from 21% to 20%; restoring zero returned all three to 21%. The user confirmed fan 4 is not physically installed, explaining the reported 0% fault for this test. No host/iLO restart or flash was performed. A native fan slider and Default button are now deployed under Details → Hardware in the ZimaOS dashboard.
 
 This is a reduction relative to automatic cooling, not an absolute-speed setting. In particular, `FanPercentAdjust: 50` does not mean 50% fan speed and cannot be used to raise the current 21% output to 50%. Faster-than-normal or absolute-speed control remains unverified.
 
