@@ -185,17 +185,33 @@ Validation covers bounds, malformed/stale requests, administrator checks, reques
 
 Persistent mode uses reported thermal warning/critical thresholds with a 5°C margin. The earlier short experiment's 5°C rise-from-baseline guard was removed for persistent use, because normal workload changes would otherwise reset the user's setting. Missing sensors and unhealthy installed fans still trigger restoration.
 
-## Higher-speed investigation and remaining work
+## Verified full-speed implementation
 
-1. Faster-than-automatic and absolute-speed control are not implemented. The existing slider must not be presented as an absolute 0–100% fan-speed control.
-2. Further static inspection found a retained `fan global lock`/`unlock` routine around ELF-layout address `0x00e19684`, with a global PWM lock field and flag. Evidence is saved in `282-blowout-handler.txt`. This is a different mechanism from the verified REST adjustment and may override the automatic fan algorithm; its safety semantics and an authorized reachable interface are not established. No lock or hidden diagnostic command was sent.
-3. The CHIF temporary-increase path is now traced further. The handler at ELF-layout address `0x0109b018` copies five fixed 24-byte arguments: `fan`, `p`, `global`, `lock`, `255` (file offset `0x0050d62c`). Its resume handler at `0x0109b088` copies `fan`, `p`, `global`, `unlock` (file offset `0x0050d6a4`). The helper at `0x010ce884` builds the internal HEALTH selector-6 request. This is a fixed full-output request, not a demonstrated arbitrary percentage API.
-   - The `smifpkt_008c` dispatcher at `0x0109b51c` selects device 4 for fan blowout, reads a duration, rejects values over 3,600, and records a countdown. A separate tick loop decrements that counter and calls the resume callback. An explicit resume operation also schedules release. These are static observations, not a live test of restoration.
-   - The local CHIF interface is currently unavailable: this kernel has no hpilo driver/device, the HPE PCI functions `103c:3306` and `103c:3307` are unbound, and matching kernel build headers are absent. No driver was loaded, PCI device rebound, or direct hardware register accessed.
-   - BMC CHIF and `lanoem_input`/`lanoem_output` strings have not established a network tunnel for arbitrary host requests. A safe authenticated transport and verified restoration are still prerequisites for a live boost test. No fan-lock or blowout request has been sent.
-   - The user observed approximately 10% actual output at 50% of automatic and 20–21% at 100% of automatic. This supports the reduction mapping; it does not demonstrate above-automatic control.
-4. Establish broader workload behavior for the adjustment range. The complete 0–50 input range is statically bounded, but the controlled hardware experiment used adjustment 5, not every possible value.
-5. Investigate why GET and the Allow header omit the accepted extension; do not depend on them alone for capability detection.
+The local host route is now working. The unmodified upstream Linux 6.12.25 `hpilo` module was built using the running kernel configuration and GCC 13.3.0 in an isolated, resource-limited container. Kernel release/vermagic, module structure size, and all 49 required exported symbols matched. The configuration differences were compiler/binutils identification and an unrelated IPv6 reachability option. No force-load option was used. Loading the driver attached the existing `103c:3307` device and created `/dev/hpilo/d0ccb*` without restarting the server or iLO.
+
+`load_hpilo.py` checks the kernel version, complete configuration hash and module hash before loading. Enabled `taelo-hpilo.service` orders this before the fan services. A changed kernel requires rebuilding; the current module is not blindly reused. Build files and compatibility evidence are retained in `/media/nvme/taelo-hpilo-build`. The official kernel archive SHA256 is `c8af780f6f613ca24622116e4c512a764335ab66e75c6643003c16e49a8e3b90`.
+
+The CHIF library was extracted from the HPE `ilorest-7.4.0.0` wheel after verifying its PyPI SHA256, `bbe31c050f7ac79a8cf2fb48163655da5a4e9a4fe2ab88a05430639372624a9d`; its installer was not run. The library's generic ping was not accepted on this iLO. A traced read-only status command succeeded instead. `ilo_chif.py` checks that response for firmware 2.82 before issuing fan commands, validates response lengths, sequence numbers, command IDs and result codes, and closes the channel on failure.
+
+Firmware evidence:
+
+- The handler at ELF-layout address `0x0109b018` copies fixed arguments `fan p global lock 255` from file offset `0x0050d62c`. Resume at `0x0109b088` copies `fan p global unlock` from `0x0050d6a4`. Helper `0x010ce884` builds HEALTH selector 6; the retained lock routine is at `0x00e19684`.
+- SMIF command `0x008c`, device 4, supports status, timed start and release. Durations are bounded at 3,600 seconds; the firmware ticker decrements the countdown and invokes release.
+- The eight-second live test recorded **21% → 100% → 21% on all three fans**. Firmware expiry restored automatic control before the independent backup timer ran. The timer also completed successfully. Highest observed temperature was 73°C before the boost and 70–71°C during/after it.
+- A second test used the actual administrator mailbox and deployed controller. Full speed was acknowledged, all three fans remained at 100% after a 12-second hold, and Default was acknowledged. Subsequent live readings confirmed 21% on every installed fan. The user independently confirmed the physical full-speed response.
+
+The dashboard Full speed button holds this mode while healthy services run. The controller starts a one-hour firmware timer and renews it before expiry; renewal briefly releases and reapplies the override. A process/host failure cannot make this firmware timer indefinite. Default releases the CHIF override **and** clears the REST reduction, attempting both even if one fails. The independent guard also covers full-speed mode; failed restoration stays pending. Lowering the existing automatic-output slider first releases any full-speed override.
+
+Mocked backend tests cover mode transitions, timer renewal, stale-heartbeat restoration eligibility, partial restoration failure, invalid values and administrator checks. Browser tests use the actual served component with mocked authentication/telemetry and cover Full speed, Default, disabled slider during boost, acknowledgements, rejection handling, themes and mobile layout. Live mailbox/hardware testing is separate evidence. These tests do not establish every workload or a live one-hour renewal cycle.
+
+## Actual percentage control still open
+
+The user now wants an actual 1–100% selector. **That is not implemented.** The known boost command hard-codes 255 internally; its remaining request parameter is not consumed as a speed. The reduction is applied earlier in the calculation, and the global lock replaces that result later, so combining those two mechanisms does not yield an arbitrary percentage.
+
+Further tracing found the embedded-health interface and `EH_INTF_TYPE_FAN_SET`. Its handler at `0x00e11fb0` receives chunks of an 8,000-byte cooling configuration table and runs validation/activation, rather than accepting a simple speed. A nearby old command reports `defunct FAN SET command`. No cooling-table upload or guessed percentage packet was sent. An independently verified variable-speed interface and safe lower bounds remain prerequisites for exposing a percentage selector.
+
+Private evidence includes `chif-first-ping.json`, `chif-status-query.json`, `chif-fan-state-query.json`, `chif-idle-resume-test.json`, `chif-first-boost-test.json`, `chif-dashboard-integration-test.json`, `282-final-pwm-overrides.txt`, `282-chif-embedded-health-route.txt`, `282-eh-dispatch.txt` and `282-eh-fan-handler.txt`. The host boot ID remained unchanged, iLO stayed on 2.82, and final test state was Default.
+
 
 ## Other options and their limits
 
