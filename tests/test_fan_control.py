@@ -24,6 +24,7 @@ def request(adjustment=None):
  if adjustment is not None:events.append(('adjust',adjustment));return {}
  return {'Fans':[{'FanName':'Fan '+str(i),'CurrentReading':21,'Status':{'Health':'OK'}} for i in (1,2,3)],
  'Temperatures':[{'Name':'CPU','ReadingCelsius':45,'UpperThresholdCritical':90,'Status':{'State':'Enabled','Health':'OK'}}]}
+f.INSTALLED_FANS=('Fan 1','Fan 2','Fan 3')
 f.FanChannel=Channel;f.request=request;f.chif_present=lambda:True
 f.cpu_temperatures=lambda:[{'id':0,'celsius':55,'maximum':55,'critical':100},{'id':1,'celsius':45,'maximum':45,'critical':100}]
 with tempfile.TemporaryDirectory() as td:
@@ -100,4 +101,5 @@ with tempfile.TemporaryDirectory() as td:
   try:f.telemetry(readings,baseline);raise AssertionError('unsafe telemetry accepted')
   except RuntimeError:pass
 print('PASS percentage targets, quantization, renewal, drift, restoration, faults, strict bounds and admin checks')
+
 

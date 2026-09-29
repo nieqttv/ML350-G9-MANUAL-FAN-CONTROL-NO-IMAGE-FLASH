@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 
 DEFAULT_CURVE = [[40,20],[50,30],[60,45],[70,65],[80,100]]
-SETTINGS = Path('/var/lib/casaos/taelo-fan-settings/curve.json')
+SETTINGS = Path('/var/lib/ml350-fan-control/curve.json')
 
 def validate_curve(points):
     if not isinstance(points,list) or not 2 <= len(points) <= 8:
@@ -22,13 +22,28 @@ def validate_curve(points):
         result.append(point[:])
     return result
 
-def cpu_temperatures(root=Path('/sys/class/hwmon')):
+def cpu_topology(root=Path('/sys/devices/system/cpu')):
     sockets={}
+    for cpu in root.glob('cpu[0-9]*'):
+        online=cpu/'online'
+        if online.exists() and online.read_text().strip()=='0':continue
+        sid=int((cpu/'topology/physical_package_id').read_text())
+        core=int((cpu/'topology/core_id').read_text())
+        sockets.setdefault(sid,set()).add(core)
+    if not sockets or len(sockets)>2:raise RuntimeError('One or two CPU packages are required')
+    return sockets
+
+def cpu_temperatures(root=Path('/sys/class/hwmon'),topology=None):
+    if topology is None and root==Path('/sys/class/hwmon'):
+        topology=cpu_topology()
+    sockets={}
+    found_cores={}
     for hw in root.glob('*'):
-        if (hw/'name').read_text().strip()!='coretemp':
+        if not (hw/'name').exists() or (hw/'name').read_text().strip()!='coretemp':
             continue
         labels={p.stem.removesuffix('_label'):p.read_text().strip() for p in hw.glob('temp*_label')}
-        package=next((key for key,label in labels.items() if label.startswith('Package id ')),None)
+        packages=[key for key,label in labels.items() if label.startswith('Package id ')]
+        package=packages[0] if len(packages)==1 else None
         if package is None:
             raise RuntimeError('CPU package sensor missing')
         sid=int(labels[package].split()[-1])
@@ -43,16 +58,18 @@ def cpu_temperatures(root=Path('/sys/class/hwmon')):
             if alarm.exists() and int(alarm.read_text()):
                 alarm_active=True
             values[key]=value
-        if len(values)!=17:
-            raise RuntimeError('CPU core sensors missing')
+        cores=[int(label.split()[-1]) for label in labels.values() if label.startswith('Core ')]
+        if not cores or len(cores)!=len(set(cores)):
+            raise RuntimeError('CPU core sensors missing or duplicated')
+        found_cores[sid]=set(cores)
         critical=int((hw/(package+'_crit')).read_text())/1000
         maximum=max(values.values())
         if not 85<=critical<=125:
             raise RuntimeError('CPU critical threshold unavailable')
         if sid in sockets:raise RuntimeError('Duplicate CPU package')
         sockets[sid]={'id':sid,'celsius':values[package],'maximum':maximum,'critical':critical,'alarm':alarm_active}
-    if set(sockets)!={0,1}:
-        raise RuntimeError('Both CPU temperature sensors are required')
+    if not sockets or len(sockets)>2 or (topology is not None and found_cores!=topology):
+        raise RuntimeError('CPU package/core sensors do not match the online CPU topology')
     return [sockets[k] for k in sorted(sockets)]
 
 def curve_output(points,temperature):
@@ -70,3 +87,4 @@ def cooling_protection(cpus,was_active=False):
 def next_target(current,desired,now):
     # The saved curve is authoritative; no hidden delay or downward rate limit.
     return desired
+

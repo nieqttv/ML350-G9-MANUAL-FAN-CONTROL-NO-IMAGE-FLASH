@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.so
+*.dll
+*.ko
+*.whl
+*.pem
+.private-chif/
+fan-research/
+hpilo-module/
+ilo-credentials.json
+config.local.json
+*.sqlite3*

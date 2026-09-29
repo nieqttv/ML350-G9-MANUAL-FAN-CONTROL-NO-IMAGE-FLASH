@@ -6,11 +6,12 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path('/DATA/.taelo/zimaos-dashboard')
+from fan_config import library_path, require_model
 
 class FanChannel:
     def __enter__(self):
-        self.lib = c.CDLL(str(ROOT / 'fan-research/ilorest_chif.so'))
+        require_model()
+        self.lib = c.CDLL(str(library_path()))
         self.lib.ChifInitialize.argtypes = [c.c_void_p]
         self.lib.ChifInitialize.restype = c.c_uint32
         self.lib.ChifCreate.argtypes = [c.POINTER(c.c_void_p)]
@@ -124,4 +125,5 @@ if __name__ == '__main__':
         raise SystemExit('query or default')
     with FanChannel() as channel:
         print(json.dumps(channel.query() if sys.argv[1] == 'query' else channel.default()))
+
 

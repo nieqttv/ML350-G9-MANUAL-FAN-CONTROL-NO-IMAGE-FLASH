@@ -1,0 +1,29 @@
+[Unit]
+Description=ML350 Gen9 timed manual fan controller
+Requires=ml350-fan-guard.service
+After=network-online.target ml350-fan-guard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/python3 /usr/local/lib/ml350-fan-control/fan_cli.py preflight
+ExecStart=/usr/bin/python3 /usr/local/lib/ml350-fan-control/fan_control.py controller
+ExecStopPost=/usr/bin/python3 /usr/local/lib/ml350-fan-control/fan_control.py restore
+TimeoutStopSec=45
+User=root
+UMask=0077
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/ml350-fan-control /var/lib/ml350-fan-control -/var/lib/casaos
+
+[Install]
+WantedBy=multi-user.target

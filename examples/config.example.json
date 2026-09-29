@@ -1,0 +1,14 @@
+{
+  "credentials": "/etc/ml350-fan-control/ilo-credentials.json",
+  "certificate": "/etc/ml350-fan-control/ilo-certificate.pem",
+  "chif_library": "/usr/local/lib/ml350-fan-control/ilorest_chif.so",
+  "runtime": "/run/ml350-fan-control",
+  "settings": "/var/lib/ml350-fan-control/curve.json",
+  "installed_fans": [
+    "Fan 1",
+    "Fan 2",
+    "Fan 3"
+  ],
+  "casaos": false,
+  "casaos_users": "/var/lib/casaos"
+}

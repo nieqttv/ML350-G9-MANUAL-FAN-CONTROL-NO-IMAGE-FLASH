@@ -1,0 +1,32 @@
+[Unit]
+Description=Independent ML350 Gen9 automatic cooling guard
+Wants=network-online.target
+After=network-online.target
+Before=ml350-fan-control.service
+
+[Service]
+Type=simple
+# Load the stock driver outside the service's module sandbox.
+ExecStartPre=+/usr/bin/python3 /usr/local/lib/ml350-fan-control/load_hpilo.py
+ExecStart=/usr/bin/python3 /usr/local/lib/ml350-fan-control/fan_control.py guard
+RuntimeDirectory=ml350-fan-control
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+TimeoutStopSec=15
+User=root
+UMask=0077
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/ml350-fan-control /var/lib/ml350-fan-control -/var/lib/casaos
+
+[Install]
+WantedBy=multi-user.target

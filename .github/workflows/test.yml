@@ -1,0 +1,11 @@
+name: Isolated safety and setup tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run mocked safety and staging tests
+        run: sudo python3 tests/run_tests.py

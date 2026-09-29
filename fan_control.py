@@ -1,28 +1,52 @@
-"""Administrator fan controls using native ZimaOS custom storage."""
-import base64, fcntl, hashlib, http.client, json, os, signal, sqlite3, ssl, stat, sys, time
+"""Root controller with an independent guard and optional CasaOS mailboxes."""
+import base64, fcntl, hashlib, http.client, json, math, os, signal, sqlite3, ssl, stat, sys, tempfile, time
 from contextlib import contextmanager
 from pathlib import Path
 from ilo_chif import FanChannel
-from fan_curve import DEFAULT_CURVE, SETTINGS, validate_curve, cpu_temperatures, curve_output, next_target, cooling_protection
-ROOT=Path('/DATA/.taelo/zimaos-dashboard')
-RUN=Path('/run/taelo-fan-control')
+from fan_curve import DEFAULT_CURVE, SETTINGS, validate_curve, cpu_temperatures as read_cpu_temperatures, cpu_topology, curve_output, next_target, cooling_protection
+from fan_config import load_config, credentials, secure_read, require_model
+CFG=None
+RUN=Path('/run/ml350-fan-control')
 USERS=Path('/var/lib/casaos')
+INSTALLED_FANS=()
+CASAOS=False
+CPU_TOPOLOGY=None
+
+def cpu_temperatures():
+    return read_cpu_temperatures(topology=CPU_TOPOLOGY)
 STATE=RUN/'lease.json'
 STATUS=RUN/'status.json'
 MAX_ADJUSTMENT=50
 BOOST_SECONDS=60
 running=True
+CLI_REQUEST=RUN/'request.json'
+
+def configure(cfg=None):
+    global CFG,RUN,USERS,STATE,STATUS,SETTINGS,INSTALLED_FANS,CASAOS,CLI_REQUEST
+    CFG=cfg or load_config()
+    RUN=Path(CFG['runtime']);USERS=Path(CFG['casaos_users'])
+    STATE=RUN/'lease.json';STATUS=RUN/'status.json';CLI_REQUEST=RUN/'request.json'
+    SETTINGS=Path(CFG['settings']);INSTALLED_FANS=tuple(CFG['installed_fans']);CASAOS=CFG['casaos']
 
 def atomic(path,value,mode=0o600):
-    tmp=path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(value,separators=(',',':')))
-    tmp.chmod(mode)
-    tmp.replace(path)
+    # A unique, private temporary file avoids exposing credentials or following links.
+    fd,name=tempfile.mkstemp(prefix='.'+path.name,dir=path.parent)
+    try:
+        with os.fdopen(fd,'w') as stream:
+            json.dump(value,stream,separators=(',',':'));stream.flush();os.fsync(stream.fileno())
+        os.chmod(name,mode)
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):os.unlink(name)
 
 @contextmanager
 def locked():
     RUN.mkdir(mode=0o755,parents=True,exist_ok=True)
-    with (RUN/'control.lock').open('a') as f:
+    info=RUN.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022:
+        raise RuntimeError('Runtime directory must be root-owned and not writable by others')
+    fd=os.open(RUN/'control.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'a') as f:
         fcntl.flock(f,fcntl.LOCK_EX)
         yield
 
@@ -30,27 +54,32 @@ def state():
     try:return json.loads(STATE.read_text())
     except (OSError,ValueError):return {'adjustment':0,'restoreNeeded':True,'ready':False}
 
-def request(adjustment=None):
-    cfg=json.loads((ROOT/'ilo-credentials.json').read_text())
-    pin=hashlib.sha256(ssl.PEM_cert_to_DER_cert((ROOT/'ilo-certificate.pem').read_text())).digest()
+def request(adjustment=None,path='/redfish/v1/Chassis/1/Thermal/'):
+    cfg=credentials(CFG or load_config())
+    pin=hashlib.sha256(ssl.PEM_cert_to_DER_cert(secure_read((CFG or load_config())['certificate']))).digest()
     connection=http.client.HTTPSConnection(cfg['host'],timeout=4,context=ssl._create_unverified_context())
     try:
         connection.connect()
         if hashlib.sha256(connection.sock.getpeercert(binary_form=True)).digest()!=pin:raise RuntimeError('iLO certificate changed')
         auth='Basic '+base64.b64encode((cfg['username']+':'+cfg['password']).encode()).decode()
         body=None if adjustment is None else json.dumps({'Oem':{'Hp':{'FanPercentAdjust':adjustment}}})
-        connection.request('GET' if adjustment is None else 'PATCH','/redfish/v1/Chassis/1/Thermal/',body=body,headers={'Authorization':auth,'Content-Type':'application/json','Accept':'application/json'})
-        response=connection.getresponse();data=json.loads(response.read())
+        connection.request('GET' if adjustment is None else 'PATCH',path,body=body,headers={'Authorization':auth,'Content-Type':'application/json','Accept':'application/json'})
+        response=connection.getresponse();raw=response.read(1048577)
+        if len(raw)>1048576:raise RuntimeError('iLO response too large')
+        data=json.loads(raw)
+        if not isinstance(data,dict):raise RuntimeError('iLO response invalid')
         if response.status!=200:raise RuntimeError('iLO request failed')
         if adjustment is not None and not any(x.get('MessageID')=='Base.0.10.Success' for x in data.get('Messages',[])):raise RuntimeError('iLO did not confirm change')
         return data
     finally:connection.close()
 
 def admins():
-    with sqlite3.connect('file:/var/lib/casaos/db/user.db?mode=ro',uri=True,timeout=2) as db:
-        return {str(row[0]) for table in ['o_users','sub_users'] for row in db.execute("select id from "+table+" where role='admin'")}
+    if not CASAOS:return {'root'}
+    with sqlite3.connect('file:'+str(USERS/'db/user.db')+'?mode=ro',uri=True,timeout=2) as db:
+        return {'root'}|{str(row[0]) for table in ['o_users','sub_users'] for row in db.execute("select id from "+table+" where role='admin'")}
 
 def links(ids):
+    if not CASAOS:return
     for directory in USERS.iterdir():
         if not directory.name.isdecimal() or not directory.is_dir():continue
         link=directory/'taelo_fan_control.json'
@@ -59,12 +88,32 @@ def links(ids):
         elif link.is_symlink() and link.readlink()==STATUS:link.unlink()
 
 def telemetry(data,baseline=None):
-    fans=[{'name':fan.get('FanName'),'percent':fan.get('CurrentReading'),'health':fan.get('Status',{}).get('Health')} for fan in data.get('Fans',[]) if fan.get('FanName') in ('Fan 1','Fan 2','Fan 3')]
-    temps={sensor.get('Name'):sensor for sensor in data.get('Temperatures',[]) if sensor.get('Status',{}).get('State')!='Absent' and isinstance(sensor.get('ReadingCelsius'),(int,float))}
-    if len(fans)!=3 or any(fan['health']!='OK' or not isinstance(fan['percent'],(int,float)) or fan['percent']<=0 for fan in fans):raise RuntimeError('Installed fan readings unavailable or unhealthy')
+    if not INSTALLED_FANS:raise RuntimeError('Installed fans must be configured')
+    raw=data.get('Fans',[])
+    named={fan.get('FanName'):fan for fan in raw}
+    if len(named)!=len(raw):raise RuntimeError('Duplicate or unnamed fan readings')
+    fans=[]
+    for name in INSTALLED_FANS:
+        fan=named.get(name,{})
+        value=fan.get('CurrentReading')
+        if fan.get('Status',{}).get('State')=='Absent' or fan.get('Status',{}).get('Health')!='OK' or type(value) not in (int,float) or not math.isfinite(value) or not 0<value<=100:
+            raise RuntimeError('Installed fan readings unavailable or unhealthy')
+        fans.append({'name':name,'percent':value,'health':'OK'})
+    for name,fan in named.items():
+        value=fan.get('CurrentReading')
+        if name not in INSTALLED_FANS and fan.get('Status',{}).get('State')!='Absent' and type(value) in (int,float) and value>0:
+            raise RuntimeError('A running fan is missing from installed_fans')
+    temps={}
+    for sensor in data.get('Temperatures',[]):
+        if sensor.get('Status',{}).get('State')=='Absent':continue
+        value=sensor.get('ReadingCelsius')
+        name=sensor.get('Name')
+        if not isinstance(name,str) or name in temps or type(value) not in (int,float) or not math.isfinite(value) or not -20<value<125:
+            raise RuntimeError('Temperature readings unavailable')
+        temps[name]=sensor
     if not temps:raise RuntimeError('Temperature readings unavailable')
     for sensor in temps.values():
-        limits=[sensor[key]-5 for key in ('UpperThresholdCritical','UpperThresholdNonCritical') if isinstance(sensor.get(key),(int,float)) and sensor[key]>0]
+        limits=[sensor[key]-5 for key in ('UpperThresholdCritical','UpperThresholdNonCritical') if type(sensor.get(key)) in (int,float) and math.isfinite(sensor[key]) and sensor[key]>0]
         if sensor.get('Status',{}).get('Health') not in (None,'OK') or (limits and sensor['ReadingCelsius']>=min(limits)):raise RuntimeError('Temperature limit reached')
     if baseline and not set(baseline).issubset(temps):raise RuntimeError('Temperature sensor missing')
     return fans,{name:sensor['ReadingCelsius'] for name,sensor in temps.items()}
@@ -126,9 +175,19 @@ def read_command(path):
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
     try:
         info=os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size>8192:raise ValueError('Invalid request file')
+        if not stat.S_ISREG(info.st_mode) or info.st_size>8192 or (path==CLI_REQUEST and (info.st_uid!=0 or info.st_mode&0o077)):raise ValueError('Invalid request file')
         with os.fdopen(fd,'r',closefd=False) as stream:return json.loads(stream.read(8193))
     finally:os.close(fd)
+
+def consume_cli(current,ids):
+    if CLI_REQUEST.exists() or CLI_REQUEST.is_symlink():
+        try:
+            command=read_command(CLI_REQUEST)
+            CLI_REQUEST.unlink()
+            current=process(current,'root',command,ids,time.time())
+        except (OSError,ValueError):
+            CLI_REQUEST.unlink(missing_ok=True)
+    return current
 
 def start_boost(current):
     with FanChannel() as channel:
@@ -228,7 +287,10 @@ def saved_curve():
     except (OSError,ValueError):return [point[:] for point in DEFAULT_CURVE]
 
 def main(mode):
-    global running
+    global running,CPU_TOPOLOGY
+    configure()
+    require_model()
+    if mode=='controller':CPU_TOPOLOGY=cpu_topology()
     signal.signal(signal.SIGTERM,lambda *args:stop())
     signal.signal(signal.SIGINT,lambda *args:stop())
     seen={};last_poll=0
@@ -238,7 +300,8 @@ def main(mode):
     if mode=='controller':
         with locked():
             current=restore(state());current['curve']=saved_curve();current['heartbeat']=time.time();atomic(STATE,current);publish(current)
-            for directory in USERS.iterdir():
+            CLI_REQUEST.unlink(missing_ok=True)
+            for directory in (USERS.iterdir() if CASAOS else []):
                 path=directory/'taelo_fan_request.json'
                 if directory.name.isdecimal() and path.exists():seen[str(path)]=path.stat().st_mtime_ns
     try:
@@ -256,7 +319,7 @@ def main(mode):
                         if now-last_poll>=3:
                             try:
                                 fans,temps=telemetry(request(),current.get('baseline'))
-                                current.update(fans=fans,sampledAt=time.time())
+                                current.update(fans=fans,sampledAt=time.time(),baseline=current.get('baseline') or temps)
                                 current=poll_boost(current)
                                 current=poll_curve(current)
                                 current['ready']=not current.get('restoreNeeded') and time.time()-current.get('guardHeartbeat',0)<12
@@ -266,7 +329,8 @@ def main(mode):
                                 current['ready']=False
                             last_poll=now
                         if time.time()-current.get('guardHeartbeat',0)>=12 and manual(current):current=restore(current,'Restoration guard unavailable')
-                        for uid in sorted(ids):
+                        current=consume_cli(current,ids)
+                        for uid in sorted(ids-{'root'}):
                             path=USERS/uid/'taelo_fan_request.json'
                             try:
                                 modified=path.lstat().st_mtime_ns
@@ -287,6 +351,8 @@ def stop():
     running=False
 
 if __name__=='__main__':
+    if os.geteuid()!=0:raise SystemExit('Run as root')
     if len(sys.argv)!=2 or sys.argv[1] not in ('controller','guard','restore'):raise SystemExit('controller, guard or restore')
     main(sys.argv[1])
+
 
