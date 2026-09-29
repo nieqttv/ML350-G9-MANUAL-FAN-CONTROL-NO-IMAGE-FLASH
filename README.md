@@ -4,11 +4,13 @@ Investigation date: **29 September 2026**. Target: **HPE ProLiant ML350 Gen9, iL
 
 ## Current result
 
-**Safe live manual fan control has not been implemented or verified.** Offline inspection of the official 2.82 firmware found more than command-help strings: executable ARM code references an external fan adjustment and performs percentage arithmetic. The REST implementation also contains a `FanPercentAdjust` property model.
+**The network path to the internal adjustment setter has been identified and accepts a zero-adjustment request on stock iLO 4 2.82.** No firmware flash, host restart, or iLO restart was performed.
 
-Those findings establish useful research leads, not a working public control interface. On the tested ML350, the thermal endpoint advertises `GET, HEAD`, returns no `Oem.Hp.FanPercentAdjust`, and does not provide the referenced extension schema. No experimental control request has been sent.
+The endpoint is `PATCH /redfish/v1/Chassis/1/Thermal/`, with the property `Oem.Hp.FanPercentAdjust`. It accepts zero with HTTP 200 and `Base.0.10.Success`, rejects an invented OEM property, and rejects 51 with `iLO.0.10.PropertyValueBadParam`. Static firmware tracing connects the thermal update handler to the bounded internal setter.
 
-The investigation remains open. The next question is how, or whether, an authorized host or management request can reach this internal adjustment on this platform without changing firmware.
+This corrects the initial inference from the misleading `Allow: GET, HEAD` header and missing property in GET responses: those observations did **not** mean the update path was unavailable.
+
+**Physical speed reduction is not yet verified.** No nonzero valid adjustment was applied, because fan 4 continues to report Enabled/Critical at 0%. Fans 1–3 stayed at 21% through the tests. The dashboard has not received a fan slider.
 
 ## Requirements
 
@@ -16,7 +18,7 @@ The investigation remains open. The next question is how, or whether, an authori
 - Keep the server running: no shutdown or host restart.
 - Do not flash or downgrade iLO firmware.
 - Preserve firmware thermal protection; do not falsify temperatures or disable sensors.
-- Do not test guessed register writes or undocumented command payloads on the production server.
+- Test only bounded requests supported by the firmware trace; do not use raw register writes, guessed internal messages, or reset commands.
 - Keep credentials, session tokens, private certificates, and authenticated configuration out of this repository.
 
 The dashboard's layout, grouping, themes, telemetry and graph-tooltip work is already deployed. This document concerns the unresolved fan-control work.
@@ -102,36 +104,53 @@ All offsets below are **file offsets in the decompressed userland ELF**, not off
 
 Static ARM disassembly with Capstone 5.0.6 found PC-relative references to both external-adjustment messages. Around virtual address `0x00e12eb8`, the code reads a byte at an internal structure offset of 9, bypasses the adjustment when zero, checks a speed threshold, and performs arithmetic involving `100 - adjustment` and the existing speed before logging the change. The high-speed branch references the ignored-adjustment message.
 
-**Interpretation:** this is evidence of an internal adjustment path, not merely unused help text. The exact public setter, supported platform conditions, persistence, complete limits, and fail-safe behavior have not been established. The nearby arithmetic alone is insufficient to choose a safe value or promise a particular fan speed.
+**Interpretation:** this is evidence of an internal adjustment path, not merely unused help text. The network setter has now been traced and tested at zero. Persistence, complete platform behavior and fail-safe behavior remain unverified. The nearby arithmetic alone is insufficient to promise a particular physical fan speed.
 
 A subsequent static trace found a writer to the same adjustment byte. The health handler at virtual address `0x00e06d60` dispatches selector 15 to `0x00e06f00`. That branch reads an unsigned value from request offset 8, accepts values below 51, and writes its low byte to the field used by the adjustment calculation. Zero is accepted by this writer and bypasses the adjustment at the observed read site. A call to this handler exists at `0x00e079e8`.
 
-This narrows the internal field range to **0–50 at this particular writer**. It does not establish a callable host/network command: the enclosing message transport, authorization and platform conditions remain untraced. Nor does it prove that zero restores every aspect of normal operation. No request using these values was sent. Supporting local reports: `282-adjustment-field-write.txt`, `282-adjustment-dispatch.txt`, `282-adjustment-structure-references.json`, and `282-adjustment-handler-callers.json`.
+This narrows the internal field range to **0–50 at this particular writer**. The follow-up trace below connects it to a network request. Zero bypasses the adjustment at the observed read site, but this does not prove it restores every possible cooling override. Supporting local reports: `282-adjustment-field-write.txt`, `282-adjustment-dispatch.txt`, `282-adjustment-structure-references.json`, and `282-adjustment-handler-callers.json`.
 
 The CHIF message provides a separate lead for a temporary host-requested speed increase. Its entry point and request format have not been traced. It is not evidence of arbitrary slower/faster control.
 
-The `FanPercentAdjust` string has references in generated REST property handling. Generated serialization/deserialization code does not prove that the running platform registers a writable service for it.
+The `FanPercentAdjust` string has references in generated REST property handling. The follow-up also found a thermal-service call at ELF-layout address `0x034a20cc` to a wrapper at `0x034fc3c8`. That wrapper constructs a health-service request with top-level selector 10, sub-selector 15 and the supplied value. The health-service dispatcher routes selector 10 to the previously identified handler. A registration references the name `HEALTH` and that dispatcher.
+
+These are static ELF-layout addresses, not callable runtime addresses; embedded modules require their own address mapping and relocation. They are evidence references only. No internal RPC was injected.
 
 ### 4. Checking the new firmware lead against the running system
 
-Only authenticated reads were used, with the existing certificate pin checked on the same TLS connection before sending credentials.
+Initial checks used authenticated reads. Subsequent bounded PATCH tests were explicitly authorized by the user, retaining the prohibition on restarting either the host or iLO. Every connection checked the existing certificate pin before sending credentials.
 
 - The thermal resource still returns `Allow: GET, HEAD` and no OEM adjustment object.
 - `GET /redfish/v1/Schemas/HpThermalExt/` returns 404.
 - `GET /redfish/v1/SchemaStore/en/HpThermalExt.json/` returns 500.
 - `GET /redfish/v1/SchemaStore/en/Thermal.json/` succeeds with a gzip body. Its generic schema references `Oem.Hp` through `HpThermalExt.json` and marks that object writable.
 
-**Unresolved discrepancy:** the generic schema and compiled property model contain an extension that the observed live resource does not expose. Schema metadata must not be mistaken for platform support. No PATCH, guessed extension value, or hidden fan command was attempted.
+### 5. Authorized live tests
+
+The following requests targeted only the thermal endpoint. The HTTP response's legacy envelope sometimes contains a field named `error` even on success; the HTTP status and embedded message ID were inspected together.
+
+| PATCH body | HTTP | Message | Interpretation |
+| --- | ---: | --- | --- |
+| `{}` | 400 | `Base.0.10.MalformedJSON` | Empty object is rejected by this implementation; not a method-support test |
+| `{"Name":"Thermal"}` | 400 | `Base.0.10.PropertyUnknown` | Existing name reassertion rejected |
+| `{"Oem":{"Hp":{}}}` | 400 | `Base.0.10.MalformedJSON` | Empty extension rejected |
+| `{"Oem":{"Hp":{"FanPercentAdjust":0}}}` | 200 | `Base.0.10.Success` | Recognized zero-adjustment request accepted |
+| `{"Oem":{"Hp":{"TaeloProbeOnly":0}}}` | 400 | `Base.0.10.PropertyUnknown` | Negative control confirms arbitrary OEM fields are not silently accepted |
+| `{"Oem":{"Hp":{"FanPercentAdjust":51}}}` | 400 | `iLO.0.10.PropertyValueBadParam` | Rejected boundary matches the statically identified writer's range |
+
+The value 51 was chosen only after inspecting the unsigned `< 51` check that precedes the field write. No accepted positive adjustment, negative value, raw hardware access, hidden shell command, sensor change, or reset was tested.
+
+Afterward, authenticated GET still worked, fans 1–3 remained at 21%, fan 4 retained its pre-existing critical 0% reading, and reported temperature health showed no faults. These observations establish request handling and unchanged observed fan readings, not successful physical speed modulation.
+
+**Operational limit:** do not expose or test cooling reduction while fan 4's reported fault is unresolved. Firmware high-speed protection exists in the inspected path, but it has not been validated as a complete fail-safe. A success response must not be treated as proof of safe fan control.
 
 ## Next research questions
 
-1. Trace the thermal-service registration and update callbacks to determine why `FanPercentAdjust` is omitted on this system.
-2. Trace the enclosing transport and authorization for the identified internal adjustment writer; establish whether an accessible host or management request reaches it on this platform.
-3. Trace the CHIF temporary fan-increase path separately; establish its duration, limits, and applicability to ML350 Gen9.
-4. If useful, compare official 2.77 and 2.82 binaries offline to distinguish removed diagnostic commands from retained thermal-control logic. Do not flash either image.
-5. Before any production control experiment, establish input bounds, authorization, automatic-control restoration, persistence, and behavior if the client or connection fails. Validate uncertain hardware behavior on a matching spare system first.
-
-No working command is being withheld: no safe usable command has been established yet.
+1. Establish whether fan 4 is installed, expected, and operating; resolve the reported critical condition before reducing cooling.
+2. Once cooling health is established, measure a small temporary nonzero adjustment with temperature monitoring and independently scheduled restoration to zero; verify actual fan behavior and restoration.
+3. Establish persistence and client-loss behavior before implementing dashboard controls. This setting is an adjustment to automatic output, not a verified absolute percentage or per-fan control.
+4. Trace the CHIF temporary fan-increase path separately if faster-than-normal cooling is required; its request and limits remain unverified.
+5. Investigate why GET and the Allow header omit the accepted extension. Do not depend on them alone for capability detection.
 
 ## Other options and their limits
 
@@ -151,6 +170,9 @@ Important local evidence files include:
 - `282-candidate-disassembly.json`, `282-adjustment-arithmetic.txt`
 - `282-byte9-stores.json` (candidate stores only; not identified setters)
 - `Thermal-schema.json`, `assessment.md`
+- `282-health-main-dispatch.txt`, `282-rest-adjustment-wrapper-candidates.json`, `282-rest-adjustment-caller.json`
+- `282-empty-patch-test.json`, `282-same-name-patch-test.json`, `282-empty-oem-test.json`
+- `282-zero-adjustment-test.json`, `282-unknown-oem-control-test.json`, `282-rejected-boundary-test.json`
 
 ## References
 
@@ -164,3 +186,5 @@ Important local evidence files include:
 ## Change log
 
 - 2026-09-29: recorded stock-interface and host-library investigation, unpacked official 2.82 firmware, identified external-adjustment and CHIF leads, and checked the generic schema against the running thermal resource.
+
+- 2026-09-29 follow-up: traced REST-to-health dispatch, tested zero and the rejection boundary without resets, corrected the earlier interface-support inference, and retained the fan-4 fault as the limit on cooling-reduction tests.
