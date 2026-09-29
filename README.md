@@ -126,7 +126,7 @@ Only authenticated reads were used, with the existing certificate pin checked on
 ## Next research questions
 
 1. Trace the thermal-service registration and update callbacks to determine why `FanPercentAdjust` is omitted on this system.
-2. Trace writes to the internal adjustment field and identify the exact message or request that reaches them.
+2. Trace the enclosing transport and authorization for the identified internal adjustment writer; establish whether an accessible host or management request reaches it on this platform.
 3. Trace the CHIF temporary fan-increase path separately; establish its duration, limits, and applicability to ML350 Gen9.
 4. If useful, compare official 2.77 and 2.82 binaries offline to distinguish removed diagnostic commands from retained thermal-control logic. Do not flash either image.
 5. Before any production control experiment, establish input bounds, authorization, automatic-control restoration, persistence, and behavior if the client or connection fails. Validate uncertain hardware behavior on a matching spare system first.
