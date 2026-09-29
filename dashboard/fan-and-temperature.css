@@ -41,3 +41,13 @@
 
 .taelo-system .ts-map-select{display:none;width:100%;font:inherit;color:var(--taelo-text);background:var(--taelo-surface);border:1px solid var(--taelo-border);border-radius:7px;padding:9px;margin-bottom:12px}
 @media(max-width:600px){.taelo-system .ts-map-select{display:block}.taelo-system .ts-map-reading{display:none}.taelo-system .ts-map-detail>strong{font-size:22px}}
+
+.taelo-system .ts-map-board{fill:var(--taelo-surface);stroke:var(--taelo-border);stroke-width:1}
+.taelo-system .ts-map-socket{fill:none;stroke:var(--taelo-text2);stroke-width:.8;opacity:.5}
+.taelo-system .ts-map-chip{fill:var(--taelo-bg);stroke:var(--taelo-border);stroke-width:1.2}
+.taelo-system .ts-map-node.is-selected .ts-map-chip,.taelo-system .ts-map-node:focus-visible .ts-map-chip{stroke:var(--taelo-text2);stroke-width:1.5}
+.taelo-system .ts-map-chip-label{fill:var(--taelo-text2);font-weight:500;letter-spacing:.2px;pointer-events:none}
+.taelo-system .ts-map-chip-value{fill:var(--taelo-text);font-weight:500;font-variant-numeric:tabular-nums;pointer-events:none}
+.taelo-system .ts-map-airflow{stroke:var(--taelo-border);stroke-width:1.5;fill:none}
+.taelo-system .ts-map-schematic .ts-map-chassis{fill:var(--taelo-bg)}
+@media(max-width:600px){.taelo-system .ts-map-chip-label{display:none}.taelo-system .ts-map-chip-value{font-size:18px!important}.taelo-system .ts-map-schematic .ts-map-edge{font-size:14px}}
