@@ -104,6 +104,10 @@ Static ARM disassembly with Capstone 5.0.6 found PC-relative references to both 
 
 **Interpretation:** this is evidence of an internal adjustment path, not merely unused help text. The exact public setter, supported platform conditions, persistence, complete limits, and fail-safe behavior have not been established. The nearby arithmetic alone is insufficient to choose a safe value or promise a particular fan speed.
 
+A subsequent static trace found a writer to the same adjustment byte. The health handler at virtual address `0x00e06d60` dispatches selector 15 to `0x00e06f00`. That branch reads an unsigned value from request offset 8, accepts values below 51, and writes its low byte to the field used by the adjustment calculation. Zero is accepted by this writer and bypasses the adjustment at the observed read site. A call to this handler exists at `0x00e079e8`.
+
+This narrows the internal field range to **0–50 at this particular writer**. It does not establish a callable host/network command: the enclosing message transport, authorization and platform conditions remain untraced. Nor does it prove that zero restores every aspect of normal operation. No request using these values was sent. Supporting local reports: `282-adjustment-field-write.txt`, `282-adjustment-dispatch.txt`, `282-adjustment-structure-references.json`, and `282-adjustment-handler-callers.json`.
+
 The CHIF message provides a separate lead for a temporary host-requested speed increase. Its entry point and request format have not been traced. It is not evidence of arbitrary slower/faster control.
 
 The `FanPercentAdjust` string has references in generated REST property handling. Generated serialization/deserialization code does not prove that the running platform registers a writable service for it.
