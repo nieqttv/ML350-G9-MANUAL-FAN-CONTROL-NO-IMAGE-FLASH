@@ -1,4 +1,52 @@
 
+ let temperatureSheetCache={key:"",url:null};
+ function temperatureSheet(sensors){
+  const live=sensors.filter(t=>Number.isFinite(t.celsius)),key=live.map(t=>[t.name,t.x,t.y,t.celsius].join(":")).join("|");
+  if(temperatureSheetCache.key===key)return temperatureSheetCache.url;
+  if(!live.length)return null;
+  const size=16,field=new Float64Array(256),fixed=new Uint8Array(256);
+  for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
+   let sum=0,weight=0;
+   for(const t of live){const d=(gx-t.x)**2+(gy-t.y)**2,w=1/(d+.01);sum+=t.celsius*w;weight+=w;}
+   field[gy*size+gx]=sum/weight;
+  }
+  for(const t of live){const i=t.y*size+t.x;field[i]=fixed[i]?Math.max(field[i],t.celsius):t.celsius;fixed[i]=1;}
+  for(let iteration=0;iteration<240;iteration++){
+   let delta=0;
+   for(let gy=0;gy<size;gy++)for(let gx=0;gx<size;gx++){
+    const i=gy*size+gx;if(fixed[i])continue;
+    let sum=0,count=0;
+    if(gx){sum+=field[i-1];count++;}if(gx<15){sum+=field[i+1];count++;}
+    if(gy){sum+=field[i-16];count++;}if(gy<15){sum+=field[i+16];count++;}
+    const next=sum/count;delta=Math.max(delta,Math.abs(next-field[i]));field[i]=next;
+   }
+   if(delta<.005)break;
+  }
+  const cubic=(a,b,c,d,t)=>b+.5*t*(c-a+t*(2*a-5*b+4*c-d+t*(3*(b-c)+d-a)));
+  const get=(x,y)=>field[Math.max(0,Math.min(15,y))*16+Math.max(0,Math.min(15,x))];
+  const sample=(x,y)=>{
+   x=Math.max(0,Math.min(15,x));y=Math.max(0,Math.min(15,y));
+   const ix=Math.floor(x),iy=Math.floor(y),dx=x-ix,dy=y-iy,rows=[];
+   for(let j=-1;j<=2;j++)rows.push(cubic(get(ix-1,iy+j),get(ix,iy+j),get(ix+1,iy+j),get(ix+2,iy+j),dx));
+   return cubic(...rows,dy);
+  };
+  const stops=[[20,[47,79,110]],[40,[67,143,151]],[60,[174,192,135]],[75,[217,161,98]],[90,[193,87,77]]];
+  const color=t=>{
+   t=Math.max(20,Math.min(90,t));let i=1;while(i<stops.length-1&&t>stops[i][0])i++;
+   const [a,ca]=stops[i-1],[b,cb]=stops[i],ratio=(t-a)/(b-a);return ca.map((v,k)=>Math.round(v+(cb[k]-v)*ratio));
+  };
+  const canvas=document.createElement("canvas");canvas.width=canvas.height=256;
+  const context=canvas.getContext("2d");if(!context)return null;
+  const pixels=context.createImageData(256,256);
+  const minimum=Math.min(...live.map(t=>t.celsius)),maximum=Math.max(...live.map(t=>t.celsius));
+  for(let py=0;py<256;py++)for(let px=0;px<256;px++){
+   const value=Math.max(minimum,Math.min(maximum,sample(-.8+16.6*px/255,15.8-16.6*py/255))),rgb=color(value),offset=(py*256+px)*4;
+   pixels.data[offset]=rgb[0];pixels.data[offset+1]=rgb[1];pixels.data[offset+2]=rgb[2];pixels.data[offset+3]=255;
+  }
+  context.putImageData(pixels,0,0);
+  temperatureSheetCache={key,url:canvas.toDataURL("image/png")};return temperatureSheetCache.url;
+ }
+
  const selectedSensor=J(null);
  function temperatureMap(m){
   const hw=m.management||{},fresh=hw.iloConnected&&clock.value/1000-hw.sampledAt<45;
@@ -17,47 +65,29 @@
   const color=t=>!Number.isFinite(t)?"var(--taelo-text2)":t<45?"#67a99e":t<65?"#b8ad78":t<80?"#ce975f":"#d8786d";
   const short=t=>t.name.replace(/^\d+-/,"");
 
-  const label=t=>{
-   const n=short(t);
-   if(/^CPU [12]$/.test(n))return n;
-   if(n.includes("DIMM"))return n.split(" ")[0]+" DIMM";
-   if(n.startsWith("PCI "))return n.replace(" Zone","");
-   if(n==="Inlet Ambient")return "INLET";
-   if(n==="Sys Exhaust")return "EXHAUST";
-   if(n==="Storage Batt")return "BATTERY";
-   if(n.startsWith("P/S"))return n.replace("P/S ","PSU ");
-   if(n==="Chipset Zone")return "CHIP Z";
-   if(n==="Chipset")return "CHIP";
-   if(n==="iLO Zone")return "iLO";
-   if(n.includes("Mem"))return n.replace("VR ","").replace(" Mem "," VR");
-   return n.replace("VR ","").replace(" Zone"," Z")+" VR";
-  };
-  const dimensions=t=>{
-   const n=short(t);
-   return /^CPU [12]$/.test(n)?[72,48]:n.includes("DIMM")?[64,44]:/INLET|EXHAUST|BATTERY/.test(label(t))?[82,44]:n.startsWith("P/S")?[58,44]:/^VR P[12]$/.test(n)?[58,36]:[34,34];
+
+  const sheet=fresh?temperatureSheet(located):null;
+  const pick=e=>{
+   const rect=e.currentTarget.getBoundingClientRect(),gx=((e.clientX-rect.left)/rect.width*720-60)/40,gy=(660-(e.clientY-rect.top)/rect.height*720)/40;
+   const nearest=located.reduce((a,b)=>!a||(b.x-gx)**2+(b.y-gy)**2<(a.x-gx)**2+(a.y-gy)**2?b:a,null);
+   if(nearest)selectedSensor.value=nearest.name;
   };
   return h("section",{class:"ts-temperature-map","aria-label":"Server temperature map"},[
    h("div",{class:"ts-map-heading"},[h("div",{class:"ts-model"},"Temperature map"),h("span",{class:"ts-muted"},"ML350 Gen9")]),
    h("div",{class:"ts-map-scroll"},[
-    h("svg",{viewBox:"0 0 720 720",class:"ts-map-svg ts-map-schematic",role:"group","aria-label":"ML350 Gen9 sensor layout. Front at the bottom, rear at the top."},[
-     h("rect",{x:28,y:28,width:664,height:664,rx:16,class:"ts-map-chassis"}),
-     h("rect",{x:40,y:82,width:640,height:406,rx:10,class:"ts-map-board"}),
+    h("svg",{viewBox:"0 0 720 720",class:"ts-map-svg ts-map-sheet",role:"img",tabindex:0,"aria-label":"Continuous server temperature map, front at bottom and rear at top",onPointermove:pick,onPointerdown:pick,onKeydown:e=>{
+     if(!["ArrowRight","ArrowLeft","ArrowUp","ArrowDown"].includes(e.key))return;e.preventDefault();
+     const index=located.findIndex(t=>t.name===selected?.name),step=e.key==="ArrowRight"||e.key==="ArrowDown"?1:-1;
+     selectedSensor.value=located[(index+step+located.length)%located.length]?.name;
+    }},[
+     h("defs",null,[h("clipPath",{id:"ts-thermal-sheet-clip"},[h("rect",{x:28,y:28,width:664,height:664,rx:12})])]),
+     h("rect",{x:27,y:27,width:666,height:666,rx:13,class:"ts-map-chassis"}),
+     sheet?h("image",{href:sheet,x:28,y:28,width:664,height:664,preserveAspectRatio:"none","clip-path":"url(#ts-thermal-sheet-clip)"}):null,
      h("text",{x:360,y:18,"text-anchor":"middle",class:"ts-map-edge"},"REAR"),
-     h("text",{x:360,y:716,"text-anchor":"middle",class:"ts-map-edge"},"FRONT"),
-     ...[180,360,540].map(cx=>h("path",{d:"M"+cx+" 596V548m-5 6 5-6 5 6",class:"ts-map-airflow"})),
-     ...located.map(t=>{
-      const [w,ht]=dimensions(t),cx=x(t),cy=y(t),cpu=/^CPU [12]$/.test(short(t));
-      return h("g",{key:t.name,role:"button",tabindex:0,"aria-label":short(t)+": "+temp(t.celsius),"aria-pressed":selected?.name===t.name,class:"ts-map-node"+(selected?.name===t.name?" is-selected":""),onMouseenter:()=>selectedSensor.value=t.name,onFocus:()=>selectedSensor.value=t.name,onClick:()=>selectedSensor.value=t.name,onKeydown:e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();selectedSensor.value=t.name;}}},[
-       h("title",null,short(t)+" · "+temp(t.celsius)),
-       cpu?h("rect",{x:cx-w/2-4,y:cy-ht/2-4,width:w+8,height:ht+8,rx:4,class:"ts-map-socket"}):null,
-       h("rect",{x:cx-w/2,y:cy-ht/2,width:w,height:ht,rx:4,class:"ts-map-chip"}),
-       h("text",{x:cx,y:cy-(cpu?7:5),"text-anchor":"middle",class:"ts-map-chip-label",style:{fontSize:cpu?"10px":w>50?"9px":"6.8px"}},label(t)),
-       h("text",{x:cx,y:cy+(cpu?13:10),"text-anchor":"middle",class:"ts-map-chip-value",style:{fontSize:cpu?"18px":w>50?"15px":"12px"}},Number.isFinite(t.celsius)?Math.round(t.celsius)+"°":"—"),
-       h("rect",{x:cx-w/2+5,y:cy+ht/2-3,width:w-10,height:1.5,rx:.7,fill:color(t.celsius)})
-      ]);
-     })
+     h("text",{x:360,y:716,"text-anchor":"middle",class:"ts-map-edge"},"FRONT")
     ])
    ]),
+   h("div",{class:"ts-map-legend"},[h("span",null,"20°C"),h("span",{class:"ts-map-gradient"}),h("span",null,"90°C")]),
    selected?h("div",{class:"ts-map-detail","aria-live":"polite"},[
     h("div",null,[h("strong",null,short(selected)),h("span",{class:"ts-muted"},selected.host?"CPU package / cores":selected.location||"")]),
     h("strong",null,temp(selected.celsius))
