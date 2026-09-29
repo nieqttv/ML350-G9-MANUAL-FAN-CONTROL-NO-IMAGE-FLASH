@@ -1,0 +1,61 @@
+import importlib.machinery, importlib.util, tempfile, time, json, sys
+from pathlib import Path
+root=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(root))
+loader=importlib.machinery.SourceFileLoader('fan_under_test',str(root/'fan_control.py'))
+spec=importlib.util.spec_from_loader(loader.name,loader)
+f=importlib.util.module_from_spec(spec);loader.exec_module(f)
+events=[];hardware={'active':False,'remaining':0,'failDefault':False}
+class Channel:
+ def __enter__(self):return self
+ def __exit__(self,*args):pass
+ def default(self):
+  events.append('default')
+  if hardware['failDefault']:raise RuntimeError('transport unavailable')
+  hardware.update(active=False,remaining=0)
+  return self.query()
+ def boost(self,seconds):
+  events.append(('boost',seconds));hardware.update(active=True,remaining=seconds)
+ def query(self):return {key:hardware[key] for key in ('active','remaining')}
+def request(adjustment=None):
+ if adjustment is not None:events.append(('adjust',adjustment));return {}
+ return {'Fans':[{'FanName':'Fan '+str(i),'CurrentReading':21,'Status':{'Health':'OK'}} for i in (1,2,3)],
+ 'Temperatures':[{'Name':'CPU','ReadingCelsius':45,'UpperThresholdCritical':90,'Status':{'State':'Enabled','Health':'OK'}}]}
+f.FanChannel=Channel;f.request=request;f.chif_present=lambda:True
+with tempfile.TemporaryDirectory() as td:
+ f.STATE=Path(td)/'state.json';f.STATUS=Path(td)/'status.json'
+ now=time.time()
+ def cmd(mode='automatic',output=100):
+  return {'id':'test-'+str(time.time_ns()),'createdAt':time.time(),'output':output,'mode':mode}
+ current={'ready':True,'restoreNeeded':False,'boostAvailable':True,'heartbeat':now,'guardHeartbeat':now}
+ current=f.process(current,'1',cmd('full'),{'1'},now)
+ assert current['boostActive'] and current['ack']['ok'] and hardware['active']
+ assert events.index(('adjust',0))<events.index(('boost',3600))
+ assert f.overdue(current,now+16)
+ current['lastCommandAt']=0
+ current=f.process(current,'1',cmd(output=80),{'1'},time.time())
+ assert current['adjustment']==20 and not current['boostActive'] and not hardware['active']
+ assert events[-2:]==['default',('adjust',20)]
+ current=f.process(current,'1',cmd(),{'1'},time.time())
+ assert not f.manual(current) and current['ready'] and current['ack']['ok']
+ current['lastCommandAt']=0
+ current=f.process(current,'1',cmd('full'),{'1'},time.time())
+ hardware['remaining']=90
+ f.poll_boost(current)
+ assert hardware['remaining']==3600 and current['boostActive'] and not current['restoreNeeded']
+ hardware['failDefault']=True
+ restored=f.restore(current)
+ assert restored['restoreNeeded'] and not restored['ready'] and restored['boostActive']
+ assert events[-1]==('adjust',0), 'REST Default must still run when CHIF fails'
+ hardware['failDefault']=False
+ restored=f.restore(restored)
+ assert not restored['restoreNeeded'] and not restored['boostActive']
+ for bad in [cmd('full',50),cmd('unsupported'),cmd(output=200),cmd(output=True)]:
+  try:f.validate(bad,time.time());raise AssertionError('bad request accepted')
+  except ValueError:pass
+ restored=f.process(restored,'9',cmd('full'),{'1'},time.time())
+ assert not restored['ack']['ok'] and not hardware['active']
+ f.publish(restored)
+ public=json.loads(f.STATUS.read_text())
+ assert public['mode']=='automatic' and 'baseline' not in public and 'owner' not in public
+print('PASS full-speed transitions, renewal, independent restoration, partial failure, strict bounds and admin checks')
