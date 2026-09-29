@@ -51,3 +51,9 @@
 .taelo-system .ts-map-airflow{stroke:var(--taelo-border);stroke-width:1.5;fill:none}
 .taelo-system .ts-map-schematic .ts-map-chassis{fill:var(--taelo-bg)}
 @media(max-width:600px){.taelo-system .ts-map-chip-label{display:none}.taelo-system .ts-map-chip-value{font-size:18px!important}.taelo-system .ts-map-schematic .ts-map-edge{font-size:14px}}
+
+.taelo-system .ts-map-sheet{cursor:crosshair}
+.taelo-system .ts-map-sheet:focus-visible{outline:1px solid var(--taelo-text2);outline-offset:3px;border-radius:10px}
+.taelo-system .ts-map-gradient{width:180px;background:linear-gradient(90deg,#2f4f6e 0%,#438f97 29%,#aec087 57%,#d9a162 79%,#c1574d 100%)}
+.taelo-system .ts-map-select{display:block}
+.taelo-system .ts-map-sheet image{image-rendering:auto}
