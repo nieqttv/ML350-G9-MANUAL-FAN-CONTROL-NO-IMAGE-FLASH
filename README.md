@@ -224,9 +224,9 @@ Details → Hardware → Cooling offers Manual and Curve editors. The curve has 
 
 - `fan_curve.py` reads both `coretemp` packages and their 32 core sensors directly. It does not use iLO's CPU temperatures as the control input.
 - The hottest package/core reading controls all installed fans. CPU readings update with the controller polling cycle, approximately every 3–5 seconds depending on iLO response time.
-- Validation allows 2–8 points at 20–85°C and 1–100%, with strictly increasing temperatures, nondecreasing outputs and a final 100% point. The current editor displays five points.
-- Linear interpolation determines the target. Increases of at least two percentage points, and any request for 100%, apply promptly. Decreases wait ten seconds and fall by at most five percentage points per step to avoid oscillation.
-- Both packages and all expected cores must remain readable. CPU critical alarms, temperatures within 8°C of the reported critical limit, missing sensors, unhealthy fans or iLO temperature faults restore Default.
+- Validation allows 2–8 points at 20–85°C and 1–100%, with strictly increasing temperatures and nondecreasing outputs. The final point may use any valid percentage; values above its temperature hold that final output. The current editor displays five points.
+- Linear interpolation determines the target, rounded up to a whole percentage. The controller follows it on each polling cycle, with no extra downward delay or rate limit. The forced 100% endpoint and the earlier smoothing delay were removed at the user's request.
+- Both packages and all expected cores must remain readable. A separate protection override requests 100% if any core/package critical alarm is set or a CPU reaches 3°C below its reported critical limit. It releases below 8°C below that limit. On these CPUs (93°C critical), this means activation at 90°C and release below 85°C. Normal curve points are not changed. Missing sensors, unhealthy fans or iLO temperature faults still restore Default.
 - Curve points persist in root-only `/var/lib/casaos/taelo-fan-settings/curve.json`. Controller startup restores automatic cooling; a saved curve is not automatically re-enabled after a reboot.
 - Administrator commands use the existing authenticated custom-file API. Curve requests contain `id`, `createdAt`, `mode: "curve"` and `curve`; manual requests use `mode: "percentage"` and `output`. Status version is 3.
 
@@ -234,15 +234,15 @@ Details → Hardware → Cooling offers Manual and Curve editors. The curve has 
 
 The authenticated, certificate-pinned `GET /json/health_temperature` response supplies `xposition` and `yposition` for all 46 potential sensor locations. The currently installed hardware exposes 27 readings. The iLO page itself indexes a 16×16 mesh using those coordinates.
 
-The native map preserves that grid and iLO's front-facing orientation: front at the bottom, rear at the top. It shows only present sensors, keeps a fallback row for any sensor without a position, and does not invent component locations. Colored halos indicate the readings around sensor points; they are not additional measured temperatures.
+The native map preserves that grid and iLO's front-facing orientation: front at the bottom, rear at the top. It shows only present sensors, keeps a fallback row for any sensor without a position, and does not invent component locations. The final design is one continuous color sheet without sensor dots, rings or component boxes. Sensor readings fix their positions on a 16×16 grid; harmonic relaxation fills the gaps and bicubic sampling produces a smooth 256×256 image. Interpolated values are clamped to the observed range. The colors between sensors are interpolated, not additional measurements.
 
-CPU 1/2 locations use host package/core temperatures, with the iLO coordinates unchanged. Other readings retain their iLO source and freshness checks. Hover, focus, click or keyboard selection shows the sensor name and value. Mobile keeps the full map visible and provides a sensor selector. `temperature-map.json` contains only sanitized coordinates and labels.
+CPU 1/2 locations use host package/core temperatures, with the iLO coordinates unchanged. Other readings retain their iLO source and freshness checks. Pointer movement selects the nearest measured sensor; arrow keys and a selector provide keyboard/touch access. Its name and measured value appear below the sheet. Mobile keeps the complete sheet visible. `temperature-map.json` contains only sanitized coordinates and labels.
 
 ## Validation and deployment
 
 - Python checks: `python3 tests/test_fan_control.py`, `python3 tests/test_ilo_chif.py`, and `python3 tests/test_fan_curve.py`.
-- Tests cover exact packet layout, rejection of foreign records, range/type checks, timer requirements, target readback, restoration failures, curve interpolation/hysteresis, saved settings, hotter-CPU selection, missing sensors and critical temperatures.
-- Browser checks use the actual served Vue component with mocked authentication/telemetry. They cover 1–100% entry, acknowledgements, Default, curve editing/validation, mapped coordinates, host CPU replacement, 27 sensor points, keyboard selection, both themes, mobile sizing and clean unmount. Rendered screenshots were inspected.
+- Tests cover exact packet layout, rejection of foreign records, range/type checks, timer requirements, target readback, restoration failures, curve interpolation and separate thermal-protection hysteresis, saved settings, hotter-CPU selection, missing sensors and critical temperatures.
+- Browser checks use the actual served Vue component with mocked authentication/telemetry. They cover 1–100% entry, acknowledgements, Default, curve editing/validation, sensor-driven color pixels, no visible markers, host CPU replacement, all 27 sensor choices, keyboard selection, both themes, mobile sizing and clean unmount. Rendered screenshots were inspected.
 - These browser checks are separate from real administrator-mailbox/hardware tests. They do not establish every possible workload or the safe sustained minimum speed for each physical fan.
 - Dashboard fragments in `dashboard/` mirror their injected sections in the canonical server `stats-panel.js` and `stats-panel.css`. Source changes are staged, checked, backed up and rebuilt with `apply.py`; only Taelo's dashboard/fan/metrics services are restarted.
 - No host, iLO, Docker daemon or gateway restart was performed.
@@ -252,6 +252,14 @@ CPU 1/2 locations use host package/core temperatures, with the iLO coordinates u
 The administrator-mailbox integration test held a custom curve for 84 seconds. The host CPU maximum fell from 76°C into the 48–62°C range while the selected output stepped from 90% through 85%, 80%, 75%, 70% and 65%. PWM readback matched each controller target. The firmware countdown renewed from 18 to 59 seconds while retaining the 80% target. Default then confirmed the override inactive; later telemetry returned to 21% on all three installed fans.
 
 Evidence: `curve-dashboard-integration.json` and the successful `taelo-curve-integration.service` journal. The test curve was removed and the prior saved/default curve restored. The later integer-rounding check reached exactly 75% on all three fans using raw PWM 192. No deliberate overtemperature or stalled-fan condition was induced; those fallback paths were tested with fixtures.
+
+### Quiet-curve correction
+
+The user requested `[[40,10],[50,15],[60,20],[70,27],[85,40]]`. The initial requirement for a 100% final point incorrectly prevented it. That restriction and the normal downward delay were removed in both backend and editor. Tests verify each requested point, interpolation at 62°C (22%), holding 40% above 85°C before emergency protection, and the separate protection activation/recovery.
+
+The exact curve was saved and activated. A live check at 68°C selected 26%, with raw PWM 67 confirmed by readback. The user subsequently edited and saved a quieter curve through the dashboard; their newer selection was retained. Fan telemetry can lag a changing target by one iLO reporting interval.
+
+The first two map presentations (glowing dots and component boxes) were replaced following the user's clarification. The deployed map is now the continuous temperature sheet described above. Current frontend version: `51d30d55f487`. Final browser verification uses `taelo-thermal-sheet-live-verify.cjs` in Windows TEMP; tests of the served component and inspected dark/light mobile screenshots passed.
 
 ## Other options and their limits
 
