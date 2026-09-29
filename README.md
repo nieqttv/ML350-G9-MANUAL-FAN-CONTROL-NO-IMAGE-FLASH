@@ -144,7 +144,25 @@ The value 51 was chosen only after inspecting the unsigned `< 51` check that pre
 
 Afterward, authenticated GET still worked, fans 1–3 remained at 21%, fan 4 retained its pre-existing critical 0% reading, and reported temperature health showed no faults. These observations establish request handling and unchanged observed fan readings, not successful physical speed modulation.
 
-**Operational limit:** do not expose or test cooling reduction while fan 4's reported fault is unresolved. Firmware high-speed protection exists in the inspected path, but it has not been validated as a complete fail-safe. A success response must not be treated as proof of safe fan control.
+### 6. Monitored nonzero adjustment and restoration
+
+After the user confirmed fan 4 is absent, a bounded live test applied `FanPercentAdjust: 5`, then restored zero. The temporary value is a relative reduction, not a request for 5% fan speed.
+
+| Phase | Fan 1 | Fan 2 | Fan 3 | Samples |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 21% | 21% | 21% | 2 |
+| Adjustment 5 | 20% | 20% | 20% | 5 |
+| Restored adjustment 0 | 21% | 21% | 21% | 5 |
+
+The test armed a separate systemd timer before applying the adjustment. It would restore zero after 35 seconds, independently of the test process. The test also restored zero in a `finally` block. The guard service subsequently ran successfully and logged `Zero adjustment restored`; it did not restart any existing service, the host, or iLO.
+
+Monitoring checked installed fan health, sensor health, temperature thresholds with a 5°C margin, and a 5°C rise limit relative to baseline. No guard threshold was crossed. The greatest individual sensor rise observed was 2°C; the highest reading across all sensors stayed within 69–72°C during the recorded test. These short observations do not validate long-term cooling under every workload.
+
+The user noticed an audible increase during the test. Restoration from 20% to 21% could explain that, but sound alone was not used as evidence. The telemetry sequence verifies the small adjustment and its restoration.
+
+The user's requested absolute 50% speed was not applied: the confirmed API only reduces the automatic output. No negative value, undocumented upper value or alternate raw command was substituted.
+
+Evidence: `live_adjustment_test.py`, `282-live-adjustment-test.json`, `282-live-adjustment-test.log`, and the successful `taelo-fan-test-restore-1790692752.service` journal. The system metrics service remained active. No persistent nonzero override was left behind.
 
 ## Next research questions
 
